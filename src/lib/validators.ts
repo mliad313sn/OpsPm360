@@ -118,6 +118,13 @@ export const updateProjectSchema = z.object({
 });
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 
+export const advanceGateSchema = z.object({
+  projectId: z.string().cuid(),
+  // Exit-checklist answers for the CURRENT gate, keyed by checklist item key.
+  checklist: z.record(z.string().max(100), z.boolean()),
+});
+export type AdvanceGateInput = z.infer<typeof advanceGateSchema>;
+
 export const ragOverrideSchema = z.object({
   projectId: z.string().cuid(),
   override: ragSchema.nullable(), // null clears the override

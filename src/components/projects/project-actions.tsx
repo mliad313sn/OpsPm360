@@ -2,7 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { advanceGateAction } from "@/server/actions/projects";
 import { resolveBlockerAction } from "@/server/actions/blockers";
+import { GATE_EXIT_CHECKLISTS, isGate, nextGate, type Gate } from "@/lib/gates";
 import {
   createScopeChangeAction,
   decideScopeChangeAction,
@@ -13,6 +15,76 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { formatMoneyCompact } from "@/lib/finance";
 import { formatDate } from "@/lib/utils";
+
+function GateAdvanceCard({
+  projectId,
+  currentGate,
+  pending,
+  startTransition,
+  afterAction,
+}: {
+  projectId: string;
+  currentGate: string;
+  pending: boolean;
+  startTransition: React.TransitionStartFunction;
+  afterAction: (result: { ok: boolean; error?: string }, msg: string) => void;
+}): JSX.Element {
+  const gate: Gate | null = isGate(currentGate) ? currentGate : null;
+  const target = gate ? nextGate(gate) : null;
+  const items = gate ? GATE_EXIT_CHECKLISTS[gate] : [];
+  const [answers, setAnswers] = useState<Record<string, boolean>>({});
+  const allConfirmed = items.every((i) => answers[i.key] === true);
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle>Stage gate (COBIT 2019)</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {!gate || !target ? (
+          <p className="text-sm text-muted-foreground">
+            Project is at its final gate — no further advancement.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Confirm every exit item of{" "}
+              <span className="font-medium">{gate.replaceAll("_", " ")}</span> to advance to{" "}
+              <span className="font-medium">{target.replaceAll("_", " ")}</span>. The checklist
+              snapshot is audited.
+            </p>
+            <div className="grid gap-1 sm:grid-cols-2">
+              {items.map((item) => (
+                <label key={item.key} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={answers[item.key] === true}
+                    onChange={(e) => setAnswers({ ...answers, [item.key]: e.target.checked })}
+                    className="h-4 w-4 accent-[hsl(var(--primary))]"
+                  />
+                  {item.label}
+                </label>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              disabled={pending || !allConfirmed}
+              onClick={() =>
+                startTransition(async () => {
+                  const result = await advanceGateAction({ projectId, checklist: answers });
+                  afterAction(result, `Gate advanced to ${target.replaceAll("_", " ")}.`);
+                  setAnswers({});
+                })
+              }
+            >
+              Advance to {target.replaceAll("_", " ")}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 interface BlockerRow {
   id: string;
@@ -35,12 +107,14 @@ interface ScopeChangeRow {
 
 export function ProjectActions({
   projectId,
+  currentGate,
   blockers,
   scopeChanges,
   canSteer,
   canWrite,
 }: {
   projectId: string;
+  currentGate: string;
   blockers: BlockerRow[];
   scopeChanges: ScopeChangeRow[];
   canSteer: boolean;
@@ -68,6 +142,15 @@ export function ProjectActions({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      {canWrite ? (
+        <GateAdvanceCard
+          projectId={projectId}
+          currentGate={currentGate}
+          pending={pending}
+          startTransition={startTransition}
+          afterAction={afterAction}
+        />
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>Blockers &amp; escalation</CardTitle>

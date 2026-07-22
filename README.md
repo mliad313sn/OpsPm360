@@ -11,8 +11,11 @@ Boungou). Built offline-first for high-latency/unstable WAN links.
 | **Governance & IAM** | Role-based access (Group IT Manager, Site IT Lead, Exec Stakeholder, Sys Admin), strict tenant scoping (site leads see only their site + published Group projects), scrypt-hashed credentials, JWT sessions (12h), immutable COBIT 2019 audit trail on every state change |
 | **PPM & Stage-Gate intake** | 5-step project wizard (context/site → COBIT 2019 checklist → CapEx/OpEx dual-currency financials → weighted milestones → review), auto-generated project codes (`HND-2026-003`), portfolio grid with instant RAG/text filters |
 | **Offline delta-sync** | Dexie.js (IndexedDB) read cache + mutation outbox, optimistic UI, idempotent replay via client op UUIDs, `syncVersion` optimistic-concurrency conflict detection with server-authoritative rebase payloads, exponential backoff |
-| **War Room** | Red/Amber-first steering view, presenter drawer (log decision / log blocker / override RAG with mandatory audited reason), meeting session ledger, one-click Markdown minutes generation |
-| **RAG engine** | `0.40·schedule + 0.35·budget + 0.25·blocker` composite with hard rules: milestone >14d late → ≤AMBER; critical blocker open >7d → RED; budget variance >15% → RED. Null-safe, zero-division-safe, fully unit-tested |
+| **War Room** | Red/Amber-first steering view, presenter drawer (log decision / log blocker / override RAG with mandatory audited reason), meeting session ledger, Markdown minutes + printable PDF minutes page |
+| **RAG engine** | `H = 100·(0.40·schedule + 0.35·budget + 0.25·blocker)`; bands GREEN ≥80, AMBER 60–79, RED <60; hard rules: milestone >14d late → ≤AMBER; budget variance >10% → ≤AMBER, >20% → RED; critical blocker open >7d → RED. Null-safe, zero-division-safe, fully unit-tested |
+| **Stage-Gate engine** | Five COBIT gates with mandatory exit checklists (business case, InfoSec, vendor risk, EA alignment, training, SLA docs, asset tagging); advancement is blocked until every item is confirmed; each snapshot is persisted and audited |
+| **EVA** | Milestone-weighted Earned Value Analysis per project: PV / EV / AC, SV / CV, SPI / CPI on the financial ledger |
+| **Kanban board** | `/board` — stage-gate columns with RAG-sorted project cards for site-level execution tracking (shortcut **B**) |
 | **Blocker SLA escalation** | Idempotent sweep: unresolved 48h → Group IT Manager, 120h → Group CIO; audit-logged, webhook notifications, cron-driven (`/api/escalations`) |
 | **Financials** | USD base ledger with integer-cent arithmetic, XOF/EUR local display via stored FX rates, CapEx/OpEx variance reporting, scope-change approvals atomically re-baseline budget & schedule |
 
@@ -34,13 +37,13 @@ npm run dev
 Seed login: `amara.kone@endeavourmining.com` / `Endeavour#2026` (Group IT Manager).
 Site lead example: `lead.hnd@endeavourmining.com` (scoped to Houndé only).
 
-Keyboard shortcuts: **D** dashboard · **M** war room · **N** new project.
+Keyboard shortcuts: **D** dashboard · **B** board · **M** war room · **N** new project.
 
 ### Quality gates
 
 ```bash
 npm run typecheck   # strict TS, noUncheckedIndexedAccess, noUnusedLocals — 0 errors
-npm test            # 41 unit tests: RAG engine, finance engine, SLA ladder
+npm test            # unit tests: RAG engine, finance/EVA engine, SLA ladder, stage gates
 npm run build       # production build + next lint
 ```
 
@@ -91,6 +94,34 @@ EventBridge → the `/api/escalations` endpoint.
 - [ ] Optional: Redis-backed WebSocket fan-out for live meeting co-viewing (integration
       seam: revalidation already centralizes on server actions)
 
+## SRS compliance matrix
+
+Alignment with the Master SRS & Architecture Blueprint:
+
+| SRS requirement | Status | Notes |
+|---|---|---|
+| M1 RBAC (4 roles) + multi-tenant scoping | ✅ | `rbac.ts` where-fragments on every read; write guards on every mutation |
+| M1 audit trail (timestamp, user, IP, old/new state) | ✅ | Client IP auto-captured from forwarded headers in `writeAudit` |
+| M2 intake wizard + COBIT stage-gate engine | ✅ | 5 gates with enforced exit checklists (`lib/gates.ts`, `advanceGateAction`) |
+| M3 multi-currency ledger (USD base, EUR/XOF) + SAP WBS | ✅ | Integer-cent math, validated FX rates |
+| M3 Earned Value Analysis (PV/EV/AC) | ✅ | `computeEva` incl. SV/CV/SPI/CPI, milestone-weighted |
+| M3 Kanban execution view | ✅ | `/board` grouped by stage gate |
+| M3 Gantt + CPM, resource capacity matrix | 🔶 Roadmap | Milestone list with dates shipped; CPM/resource heatmaps are a follow-on epic |
+| M4 offline cache + optimistic UI + delta sync queue | ✅ | Dexie outbox, UUID idempotency, ≤50-op batches |
+| M4 LWW conflict resolution w/ server timestamps | ✅ | On version conflict: newer offline edit wins (clock-capped); older loses and receives authoritative state to rebase; both outcomes logged |
+| M5 War Room + H∈[0,100] RAG (80/60 bands, 10%/20% variance) | ✅ | Exact SRS formula and thresholds, unit-tested |
+| M5 RAG override w/ mandatory justification + PDF minutes | ✅ | Printable minutes page (browser save-as-PDF) + Markdown export |
+| M6 48h/120h SLA escalation + War Room flagging | ✅ | Idempotent sweep, webhook notifications, RAG refresh |
+| M6 scope change impact (Δ USD / Δ days) + approval | ✅ | Approval atomically re-baselines budget & target end date |
+| NFR TLS 1.3 / AES-256 at rest | ✅ (infra) | Terminate TLS at the edge; enable storage encryption on RDS/Neon volumes |
+| NFR Redis pub/sub live meeting sync | 🔶 Roadmap | Server actions centralize revalidation as the integration seam |
+
+Deliberate improvements over the SRS Prisma blueprint (kept intentionally):
+`Decimal(16,2)` instead of `Float` for money (audit-grade precision), `siteId` nullable so
+GROUP projects don't need a fake site row, blocker `escalationLevel` enum + `SyncMutationLog`
+for idempotent replay, scoped `ApprovalStatus` on scope changes instead of a lone boolean,
+and scrypt password hashes on `User`.
+
 ## Gap Audit & Self-Correction Log
 
 Defects caught and corrected by the autonomous audit loop before delivery:
@@ -102,6 +133,11 @@ Defects caught and corrected by the autonomous audit loop before delivery:
 | GAP-003 | 3 — Workflows | Medium | `/api/escalations` only accepted POST; Vercel Cron invokes with GET, so scheduled sweeps would 405 | Shared handler exported for both GET and POST |
 | GAP-004 | 4 — Resilience | Medium | No React error boundaries; a render error would white-screen the war room mid-meeting | Added `app/error.tsx` (with digest ref + offline reassurance) and `app/not-found.tsx` |
 | GAP-005 | 3 — Workflows | Low | Escalations were persisted+audited but had no outbound notification seam | Added `lib/notify.ts` webhook dispatcher (non-throwing; delivery failure never rolls back the audited escalation) |
+| GAP-006 | SRS M5 | **Medium** | RAG bands/thresholds deviated from the SRS (0–1 score, 0.75/0.5 bands, 15% RED variance) | Realigned to H∈[0,100], GREEN ≥80 / AMBER ≥60, variance >10% → ≤AMBER, >20% → RED; tests updated |
+| GAP-007 | SRS M2 | **Medium** | `currentGate` was a free label — no enforcement of gate-exit checklists | Stage-gate engine with per-gate mandatory items; advancement blocked until all confirmed; snapshot persisted + audited |
+| GAP-008 | SRS M3 | Medium | No Earned Value Analysis | `computeEva` (PV/EV/AC/SV/CV/SPI/CPI) with zero-division and zero-weight guards, tested, on project ledger |
+| GAP-009 | SRS M4 | Medium | Conflict policy was strict server-wins, not the specified LWW | Version conflicts now resolve last-write-wins on server timestamps (future-dated client clocks capped at now); losing side still gets rebase state |
+| GAP-010 | SRS M1 | Low | `AuditLog.ipAddress` column existed but was never populated | `writeAudit` auto-captures `x-forwarded-for` / `x-real-ip` |
 
 Design decisions verified during the audit (no change required):
 

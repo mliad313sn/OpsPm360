@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { assertProjectWrite, projectReadScope, ForbiddenError } from "@/lib/rbac";
@@ -20,10 +21,10 @@ export const dynamic = "force-dynamic";
  * order on reconnect. Guarantees:
  *  - Idempotency: each op carries a client-generated UUID; replays are skipped.
  *  - Tenant isolation: every op re-runs the same RBAC guards as online writes.
- *  - Conflict policy: project updates use syncVersion optimistic concurrency.
- *    A stale update is NOT applied; the server returns its authoritative state
- *    and the client rebases (server-wins for conflicting fields, client
- *    re-queues non-conflicting intent).
+ *  - Conflict policy (SRS Module 4): syncVersion optimistic concurrency with
+ *    Last-Write-Wins on server timestamps. If the offline edit occurred after
+ *    the server's last change, it is applied (and flagged in SyncMutationLog);
+ *    otherwise the server state stands and the client receives it to rebase.
  */
 
 async function applyOperation(user: SessionUser, op: SyncOperation): Promise<SyncOpResult> {
@@ -47,7 +48,48 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
         assertProjectWrite(user, project);
 
         if (project.syncVersion !== expectedSyncVersion) {
-          // Conflict: hand the client the authoritative state to rebase against.
+          // SRS Module 4: Last-Write-Wins with server timestamps. If the offline
+          // edit happened AFTER the server's last change, the offline edit wins
+          // (its clock is sanity-capped at "now" to block future-dated clients).
+          const opTime = Math.min(op.occurredAt.getTime(), Date.now());
+          if (opTime > project.updatedAt.getTime()) {
+            await prisma.$transaction(async (tx) => {
+              await tx.project.update({
+                where: { id: project.id },
+                data: { ...patch, syncVersion: { increment: 1 } },
+              });
+              await tx.syncMutationLog.create({
+                data: {
+                  clientOpId: op.clientOpId,
+                  userId: user.id,
+                  entityType: "Project",
+                  entityId: project.id,
+                  operation: "update",
+                  payload: JSON.parse(JSON.stringify(op.data)) as Prisma.InputJsonValue,
+                  conflict: true,
+                  conflictNote: `LWW: offline edit (${op.occurredAt.toISOString()}) newer than server state (${project.updatedAt.toISOString()}) — applied`,
+                },
+              });
+              await writeAudit(
+                {
+                  userId: user.id,
+                  action: "SYNC",
+                  entityType: "Project",
+                  entityId: project.id,
+                  previous: { status: project.status, currentGate: project.currentGate },
+                  next: { ...patch, _conflictResolution: "last-write-wins" },
+                },
+                tx
+              );
+            });
+            return {
+              clientOpId: op.clientOpId,
+              status: "applied",
+              message: "Version conflict resolved via last-write-wins (offline edit was newer).",
+            };
+          }
+
+          // Server state is newer: hand the client the authoritative state to rebase against.
           await prisma.syncMutationLog.create({
             data: {
               clientOpId: op.clientOpId,

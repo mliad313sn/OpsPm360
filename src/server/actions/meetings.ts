@@ -96,7 +96,7 @@ export async function recordDecisionAction(raw: unknown): Promise<ActionResult> 
 /** Close the meeting and return a Markdown minutes summary (decision ledger). */
 export async function closeMeetingAction(
   meetingId: string
-): Promise<ActionResult<{ minutesMarkdown: string }>> {
+): Promise<ActionResult<{ meetingId: string; minutesMarkdown: string }>> {
   try {
     const user = await requireSession();
     assertSteeringAuthority(user);
@@ -151,7 +151,7 @@ export async function closeMeetingAction(
     ];
 
     revalidatePath("/meeting");
-    return { ok: true, data: { minutesMarkdown: lines.join("\n") } };
+    return { ok: true, data: { meetingId: meeting.id, minutesMarkdown: lines.join("\n") } };
   } catch (err) {
     return toActionError(err);
   }

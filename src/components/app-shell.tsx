@@ -17,7 +17,7 @@ export interface ShellUser {
 
 /**
  * App chrome: top nav, offline/sync indicator, global keyboard shortcuts.
- *  M -> Meeting (War Room)   N -> New Project   D -> Dashboard
+ *  M -> Meeting (War Room)   N -> New Project   D -> Dashboard   B -> Board
  */
 export function AppShell({
   user,
@@ -47,6 +47,9 @@ export function AppShell({
         case "d":
           router.push("/");
           break;
+        case "b":
+          router.push("/board");
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
@@ -63,6 +66,9 @@ export function AppShell({
         <nav className="flex items-center gap-1 text-sm">
           <Link href="/" className="rounded px-2 py-1 hover:bg-secondary">
             Dashboard <kbd className="ml-1 text-[10px] text-muted-foreground">D</kbd>
+          </Link>
+          <Link href="/board" className="rounded px-2 py-1 hover:bg-secondary">
+            Board <kbd className="ml-1 text-[10px] text-muted-foreground">B</kbd>
           </Link>
           <Link href="/meeting" className="rounded px-2 py-1 hover:bg-secondary">
             War Room <kbd className="ml-1 text-[10px] text-muted-foreground">M</kbd>

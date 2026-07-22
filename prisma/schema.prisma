@@ -176,6 +176,8 @@ model Project {
   ragOverrideById   String?
   ragOverrideAt     DateTime?
   cobitChecklist    Json? // COBIT 2019 intake checklist snapshot
+  // Per-gate exit checklist snapshots: { [gate]: { answers, completedAt, byUserId } }
+  gateChecklists    Json?
   startDate         DateTime
   targetEndDate     DateTime
   actualEndDate     DateTime?

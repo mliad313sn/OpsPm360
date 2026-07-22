@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AuditAction, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getClientIp } from "@/lib/request-ip";
 
 /**
  * COBIT 2019 audit trail (Gate 6).
@@ -29,7 +30,11 @@ function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-/** Write an audit record. Pass the active transaction client to make it atomic. */
+/**
+ * Write an audit record. Pass the active transaction client to make it atomic.
+ * Client IP is captured automatically from the request headers when not
+ * supplied (SRS Module 1: timestamp, user, IP, previous state, new state).
+ */
 export async function writeAudit(entry: AuditEntry, tx: Tx = prisma): Promise<void> {
   await tx.auditLog.create({
     data: {
@@ -39,7 +44,7 @@ export async function writeAudit(entry: AuditEntry, tx: Tx = prisma): Promise<vo
       entityId: entry.entityId,
       previous: toJson(entry.previous),
       next: toJson(entry.next),
-      ipAddress: entry.ipAddress ?? null,
+      ipAddress: entry.ipAddress ?? getClientIp(),
     },
   });
 }

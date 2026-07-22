@@ -14,10 +14,12 @@ import {
 import { writeAudit } from "@/lib/audit";
 import { computeRag, type Rag } from "@/lib/rag";
 import {
+  advanceGateSchema,
   createProjectSchema,
   ragOverrideSchema,
   updateProjectSchema,
 } from "@/lib/validators";
+import { isGate, missingGateItems, nextGate } from "@/lib/gates";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -156,6 +158,84 @@ export async function updateProjectAction(raw: unknown): Promise<ActionResult> {
     revalidatePath("/");
     revalidatePath(`/projects/${project.id}`);
     return { ok: true, data: undefined };
+  } catch (err) {
+    return toActionError(err);
+  }
+}
+
+/**
+ * COBIT stage-gate advancement (SRS Module 2). The project only moves to the
+ * next gate when every exit-checklist item of the CURRENT gate is confirmed.
+ * The confirmed checklist snapshot is persisted and the transition audited.
+ */
+export async function advanceGateAction(
+  raw: unknown
+): Promise<ActionResult<{ newGate: string }>> {
+  try {
+    const user = await requireSession();
+    const input = advanceGateSchema.parse(raw);
+
+    const project = await prisma.project.findFirst({
+      where: { id: input.projectId, ...projectReadScope(user) },
+    });
+    if (!project) return { ok: false, error: "Project not found" };
+    assertProjectWrite(user, project);
+
+    if (!isGate(project.currentGate)) {
+      return { ok: false, error: `Unknown gate: ${project.currentGate}` };
+    }
+    const target = nextGate(project.currentGate);
+    if (!target) return { ok: false, error: "Project is already CLOSED" };
+
+    const missing = missingGateItems(project.currentGate, input.checklist);
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: `Gate exit blocked — outstanding items: ${missing.map((m) => m.label).join("; ")}`,
+      };
+    }
+
+    const existingSnapshots: Record<string, unknown> =
+      project.gateChecklists &&
+      typeof project.gateChecklists === "object" &&
+      !Array.isArray(project.gateChecklists)
+        ? { ...(project.gateChecklists as Record<string, unknown>) }
+        : {};
+    const nextSnapshots = {
+      ...existingSnapshots,
+      [project.currentGate]: {
+        answers: input.checklist,
+        completedAt: new Date().toISOString(),
+        byUserId: user.id,
+      },
+    } as Prisma.InputJsonValue;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.project.update({
+        where: { id: project.id },
+        data: {
+          currentGate: target,
+          gateChecklists: nextSnapshots,
+          syncVersion: { increment: 1 },
+        },
+      });
+      await writeAudit(
+        {
+          userId: user.id,
+          action: "UPDATE",
+          entityType: "Project",
+          entityId: project.id,
+          previous: { currentGate: project.currentGate },
+          next: { currentGate: target, gateExitChecklist: input.checklist },
+        },
+        tx
+      );
+    });
+
+    revalidatePath(`/projects/${project.id}`);
+    revalidatePath("/");
+    revalidatePath("/board");
+    return { ok: true, data: { newGate: target } };
   } catch (err) {
     return toActionError(err);
   }

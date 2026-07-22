@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeEva,
   computeVariance,
   formatMoneyCompact,
   localToUsd,
@@ -27,7 +28,20 @@ describe("computeVariance", () => {
     expect(r.overBudget).toBe(false);
   });
 
-  it("flags >15% variance as red-threshold breach", () => {
+  it("flags >20% variance as red-threshold breach (SRS)", () => {
+    const r = computeVariance({
+      ...base,
+      capexBudgetUSD: 100_000,
+      opexBudgetUSD: 0,
+      capexActualUSD: 121_000,
+      opexActualUSD: 0,
+    });
+    expect(r.variancePct).toBeCloseTo(21);
+    expect(r.breachesRedThreshold).toBe(true);
+    expect(r.breachesAmberThreshold).toBe(true);
+  });
+
+  it("flags 10-20% variance as amber but not red (SRS)", () => {
     const r = computeVariance({
       ...base,
       capexBudgetUSD: 100_000,
@@ -35,8 +49,8 @@ describe("computeVariance", () => {
       capexActualUSD: 116_000,
       opexActualUSD: 0,
     });
-    expect(r.variancePct).toBeCloseTo(16);
-    expect(r.breachesRedThreshold).toBe(true);
+    expect(r.breachesAmberThreshold).toBe(true);
+    expect(r.breachesRedThreshold).toBe(false);
   });
 
   it("returns null variancePct for zero budget instead of dividing by zero", () => {
@@ -52,15 +66,95 @@ describe("computeVariance", () => {
     expect(r.breachesRedThreshold).toBe(false);
   });
 
-  it("15% exactly does not breach (strictly greater)", () => {
-    const r = computeVariance({
+  it("thresholds are strictly greater-than (10% and 20% exactly do not breach)", () => {
+    const at10 = computeVariance({
       ...base,
       capexBudgetUSD: 100,
       opexBudgetUSD: 0,
-      capexActualUSD: 115,
+      capexActualUSD: 110,
       opexActualUSD: 0,
     });
-    expect(r.breachesRedThreshold).toBe(false);
+    expect(at10.breachesAmberThreshold).toBe(false);
+    const at20 = computeVariance({
+      ...base,
+      capexBudgetUSD: 100,
+      opexBudgetUSD: 0,
+      capexActualUSD: 120,
+      opexActualUSD: 0,
+    });
+    expect(at20.breachesRedThreshold).toBe(false);
+    expect(at20.breachesAmberThreshold).toBe(true);
+  });
+});
+
+describe("computeEva", () => {
+  const NOW = new Date("2026-07-01T00:00:00Z");
+  const DAY = 86_400_000;
+  const past = (n: number) => new Date(NOW.getTime() - n * DAY);
+  const future = (n: number) => new Date(NOW.getTime() + n * DAY);
+
+  it("computes PV/EV/AC with SPI and CPI", () => {
+    const r = computeEva(
+      {
+        budgetAtCompletionUSD: 100_000,
+        actualCostUSD: 30_000,
+        milestones: [
+          { targetDate: past(10), completed: true, weightPercent: 40 }, // planned & earned
+          { targetDate: past(5), completed: false, weightPercent: 20 }, // planned, not earned
+          { targetDate: future(30), completed: false, weightPercent: 40 },
+        ],
+      },
+      NOW
+    );
+    expect(r.plannedValueUSD).toBe(60_000);
+    expect(r.earnedValueUSD).toBe(40_000);
+    expect(r.actualCostUSD).toBe(30_000);
+    expect(r.scheduleVarianceUSD).toBe(-20_000);
+    expect(r.costVarianceUSD).toBe(10_000);
+    expect(r.spi).toBeCloseTo(40_000 / 60_000, 5);
+    expect(r.cpi).toBeCloseTo(40_000 / 30_000, 5);
+  });
+
+  it("returns null SPI/CPI when PV or AC is zero (no division by zero)", () => {
+    const r = computeEva(
+      {
+        budgetAtCompletionUSD: 100_000,
+        actualCostUSD: 0,
+        milestones: [{ targetDate: future(10), completed: false, weightPercent: 100 }],
+      },
+      NOW
+    );
+    expect(r.plannedValueUSD).toBe(0);
+    expect(r.spi).toBeNull();
+    expect(r.cpi).toBeNull();
+  });
+
+  it("falls back to equal weights when all weights are zero", () => {
+    const r = computeEva(
+      {
+        budgetAtCompletionUSD: 100_000,
+        actualCostUSD: 10_000,
+        milestones: [
+          { targetDate: past(1), completed: true, weightPercent: 0 },
+          { targetDate: future(1), completed: false, weightPercent: 0 },
+        ],
+      },
+      NOW
+    );
+    expect(r.plannedValueUSD).toBe(50_000);
+    expect(r.earnedValueUSD).toBe(50_000);
+  });
+
+  it("handles no milestones and garbage inputs safely", () => {
+    const r = computeEva(
+      { budgetAtCompletionUSD: NaN, actualCostUSD: -5, milestones: [] },
+      NOW
+    );
+    expect(r.plannedValueUSD).toBe(0);
+    expect(r.earnedValueUSD).toBe(0);
+    expect(r.actualCostUSD).toBe(0);
+    expect(r.spi).toBeNull();
+    expect(r.cpi).toBeNull();
   });
 });
 

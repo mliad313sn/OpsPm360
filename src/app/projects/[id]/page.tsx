@@ -7,7 +7,7 @@ import { AppShell } from "@/components/app-shell";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, RagBadge } from "@/components/ui/badge";
-import { formatMoney, formatMoneyCompact, usdToLocal } from "@/lib/finance";
+import { computeEva, formatMoney, formatMoneyCompact, usdToLocal } from "@/lib/finance";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +32,19 @@ export default async function ProjectDetailPage({
 
   const audit = await auditHistory("Project", project.id, 20);
   const fin = project.financialDetail;
+
+  const eva = computeEva(
+    {
+      budgetAtCompletionUSD: project.totalBudgetUSD,
+      actualCostUSD: project.totalActualUSD,
+      milestones: project.milestones.map((m) => ({
+        targetDate: m.targetDate,
+        completed: m.status === "COMPLETED",
+        weightPercent: m.weightPercent,
+      })),
+    },
+    new Date()
+  );
 
   return (
     <AppShell user={{ name: user.name, role: user.role, siteName }}>
@@ -118,6 +131,13 @@ export default async function ProjectDetailPage({
               {fin?.sapWBSElement ? (
                 <p className="mt-2 text-xs text-muted-foreground">SAP WBS: {fin.sapWBSElement}</p>
               ) : null}
+              <p className="tabular mt-2 border-t pt-2 text-xs text-muted-foreground">
+                EVA — PV {formatMoneyCompact(eva.plannedValueUSD)} · EV{" "}
+                {formatMoneyCompact(eva.earnedValueUSD)} · AC{" "}
+                {formatMoneyCompact(eva.actualCostUSD)}
+                {eva.spi !== null ? ` · SPI ${eva.spi.toFixed(2)}` : ""}
+                {eva.cpi !== null ? ` · CPI ${eva.cpi.toFixed(2)}` : ""}
+              </p>
             </CardContent>
           </Card>
 
@@ -153,6 +173,7 @@ export default async function ProjectDetailPage({
 
         <ProjectActions
           projectId={project.id}
+          currentGate={project.currentGate}
           blockers={project.blockers.map((b) => ({
             id: b.id,
             title: b.title,

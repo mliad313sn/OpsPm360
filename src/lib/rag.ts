@@ -1,13 +1,16 @@
 /**
- * Algorithmic RAG Health Score Engine.
+ * Algorithmic RAG Health Score Engine (SRS Module 5).
  *
- * Composite score = 0.40 * scheduleHealth + 0.35 * budgetHealth + 0.25 * blockerHealth
- * Each component is normalized to [0, 1] where 1 is perfectly healthy.
+ * H = 100 * (0.40 * scheduleHealth + 0.35 * budgetHealth + 0.25 * blockerHealth)
+ * Each component is normalized to [0, 1]; H is reported on the [0, 100] scale.
  *
- * Hard rules (applied after the weighted score, worst wins):
+ * Bands:  GREEN H >= 80  ·  AMBER 60 <= H < 80  ·  RED H < 60
+ *
+ * Hard rules (applied after the banded score, worst outcome wins):
  *  - Milestone delayed > 14 days        -> at best AMBER
+ *  - Budget variance  > 10% over budget -> at best AMBER
+ *  - Budget variance  > 20% over budget -> RED
  *  - CRITICAL blocker open > 7 days     -> RED
- *  - Budget variance > 15% over budget  -> RED
  */
 
 export type Rag = "RED" | "AMBER" | "GREEN";
@@ -32,7 +35,8 @@ export interface FinancialInput {
 
 export interface RagResult {
   rag: Rag;
-  score: number; // 0..1, higher is healthier
+  /** Health score H on the [0, 100] scale (SRS: GREEN >= 80, AMBER >= 60, RED < 60). */
+  score: number;
   scheduleHealth: number;
   budgetHealth: number;
   blockerHealth: number;
@@ -155,9 +159,9 @@ export function computeBlockerHealth(
   return { health: clamp01(1 - penalty), criticalOpenDays };
 }
 
-function scoreToRag(score: number): Rag {
-  if (score >= 0.75) return "GREEN";
-  if (score >= 0.5) return "AMBER";
+function scoreToRag(h: number): Rag {
+  if (h >= 80) return "GREEN";
+  if (h >= 60) return "AMBER";
   return "RED";
 }
 
@@ -180,11 +184,13 @@ export function computeRag(
   const budget = computeBudgetHealth(input.financials);
   const blocker = computeBlockerHealth(input.blockers, now);
 
-  const score = clamp01(
-    WEIGHT_SCHEDULE * schedule.health +
-      WEIGHT_BUDGET * budget.health +
-      WEIGHT_BLOCKER * blocker.health
-  );
+  const score =
+    100 *
+    clamp01(
+      WEIGHT_SCHEDULE * schedule.health +
+        WEIGHT_BUDGET * budget.health +
+        WEIGHT_BLOCKER * blocker.health
+    );
 
   let rag = scoreToRag(score);
 
@@ -199,9 +205,12 @@ export function computeRag(
       `CRITICAL blocker open ${Math.floor(blocker.criticalOpenDays)}d (>7d) — forced RED`
     );
   }
-  if (budget.variancePct !== null && budget.variancePct > 15) {
+  if (budget.variancePct !== null && budget.variancePct > 20) {
     rag = worst(rag, "RED");
-    reasons.push(`Budget variance ${budget.variancePct.toFixed(1)}% (>15%) — forced RED`);
+    reasons.push(`Budget variance ${budget.variancePct.toFixed(1)}% (>20%) — forced RED`);
+  } else if (budget.variancePct !== null && budget.variancePct > 10) {
+    rag = worst(rag, "AMBER");
+    reasons.push(`Budget variance ${budget.variancePct.toFixed(1)}% (>10%) — at best AMBER`);
   }
   if (input.financials && input.financials.totalBudgetUSD <= 0 && input.financials.totalActualUSD > 0) {
     rag = worst(rag, "RED");
@@ -209,7 +218,7 @@ export function computeRag(
   }
 
   if (reasons.length === 0) {
-    reasons.push(`Weighted health score ${(score * 100).toFixed(0)}%`);
+    reasons.push(`Weighted health score H=${score.toFixed(0)}/100`);
   }
 
   return {

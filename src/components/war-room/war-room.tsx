@@ -33,6 +33,7 @@ export function WarRoom({ rows, canSteer }: WarRoomProps): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [minutes, setMinutes] = useState<string | null>(null);
+  const [closedMeetingId, setClosedMeetingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -72,6 +73,7 @@ export function WarRoom({ rows, canSteer }: WarRoomProps): JSX.Element {
       const result = await closeMeetingAction(meetingId);
       if (result.ok) {
         setMinutes(result.data.minutesMarkdown);
+        setClosedMeetingId(result.data.meetingId);
         setMeetingId(null);
         setFeedback("Meeting closed — minutes generated below.");
       } else {
@@ -133,8 +135,10 @@ export function WarRoom({ rows, canSteer }: WarRoomProps): JSX.Element {
                   <span className="tabular">
                     {formatMoneyCompact(r.totalActualUSD)} / {formatMoneyCompact(r.totalBudgetUSD)}
                   </span>
-                  {r.variancePct !== null && r.variancePct > 15 ? (
+                  {r.variancePct !== null && r.variancePct > 20 ? (
                     <Badge variant="red">+{r.variancePct.toFixed(0)}% over</Badge>
+                  ) : r.variancePct !== null && r.variancePct > 10 ? (
+                    <Badge variant="amber">+{r.variancePct.toFixed(0)}% over</Badge>
                   ) : null}
                   {r.criticalBlockerCount > 0 ? (
                     <Badge variant="red">
@@ -181,16 +185,28 @@ export function WarRoom({ rows, canSteer }: WarRoomProps): JSX.Element {
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle>Meeting minutes (Markdown)</CardTitle>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                void navigator.clipboard.writeText(minutes);
-                setFeedback("Minutes copied to clipboard.");
-              }}
-            >
-              Copy
-            </Button>
+            <div className="flex gap-2">
+              {closedMeetingId ? (
+                <a
+                  href={`/meeting/minutes/${closedMeetingId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-xs font-medium hover:bg-secondary"
+                >
+                  Printable / PDF
+                </a>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void navigator.clipboard.writeText(minutes);
+                  setFeedback("Minutes copied to clipboard.");
+                }}
+              >
+                Copy
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 text-xs">

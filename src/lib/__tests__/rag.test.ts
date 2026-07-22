@@ -176,26 +176,39 @@ describe("computeRag — composite & hard rules", () => {
     expect(r.rag).toBe("RED");
   });
 
-  it("forces RED when budget variance exceeds 15%", () => {
+  it("forces RED when budget variance exceeds 20% (SRS)", () => {
     const r = computeRag(
       {
         milestones: [],
         blockers: [],
-        financials: { totalBudgetUSD: 100_000, totalActualUSD: 116_000 },
+        financials: { totalBudgetUSD: 100_000, totalActualUSD: 121_000 },
       },
       NOW
     );
     expect(r.rag).toBe("RED");
   });
 
-  it("handles empty everything (new project) as GREEN", () => {
-    const r = computeRag({ milestones: [], blockers: [], financials: null }, NOW);
-    expect(r.rag).toBe("GREEN");
-    expect(r.score).toBe(1);
+  it("caps at AMBER when budget variance is between 10% and 20% (SRS)", () => {
+    const r = computeRag(
+      {
+        milestones: [],
+        blockers: [],
+        financials: { totalBudgetUSD: 100_000, totalActualUSD: 112_000 },
+      },
+      NOW
+    );
+    expect(r.rag).toBe("AMBER");
+    expect(r.reasons.join(" ")).toContain(">10%");
   });
 
-  it("weights components 0.40/0.35/0.25", () => {
-    // schedule 0, budget 1, blocker 1 → 0.6 → AMBER band
+  it("handles empty everything (new project) as GREEN with H=100", () => {
+    const r = computeRag({ milestones: [], blockers: [], financials: null }, NOW);
+    expect(r.rag).toBe("GREEN");
+    expect(r.score).toBe(100);
+  });
+
+  it("weights components 0.40/0.35/0.25 on the 0-100 scale", () => {
+    // schedule 0, budget 1, blocker 1 → H = 60 → AMBER band boundary
     const r = computeRag(
       {
         milestones: [
@@ -206,7 +219,8 @@ describe("computeRag — composite & hard rules", () => {
       },
       NOW
     );
-    expect(r.score).toBeCloseTo(0.6, 5);
+    expect(r.score).toBeCloseTo(60, 5);
+    expect(r.rag).toBe("AMBER");
   });
 });
 
