@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { isGroupScoped } from "@/lib/rbac";
-import { prisma } from "@/lib/prisma";
+import { withUserDb } from "@/server/db";
 import { PrintButton } from "@/components/print-button";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +19,10 @@ export default async function MinutesPage({
   const user = await getSession();
   if (!user) redirect("/login");
 
-  const meeting = await prisma.reviewMeeting.findUnique({
-    where: { id: params.id },
-    include: {
+  const meeting = await withUserDb(user, (db) =>
+    db.reviewMeeting.findUnique({
+      where: { id: params.id },
+      include: {
       chairedBy: { select: { name: true } },
       decisions: {
         // Tenant isolation: site-scoped users only see decisions about
@@ -37,10 +38,11 @@ export default async function MinutesPage({
           project: { select: { code: true, title: true } },
           signedOffBy: { select: { name: true } },
         },
-        orderBy: { createdAt: "asc" },
+          orderBy: { createdAt: "asc" },
+        },
       },
-    },
-  });
+    })
+  );
   if (!meeting) notFound();
 
   return (

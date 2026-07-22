@@ -4,10 +4,41 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Cloud, CloudOff, RefreshCw, Trash2, X } from "lucide-react";
 import { getOfflineDb, type OutboxItem } from "@/offline/db";
-import { discardOutboxItem } from "@/offline/sync-engine";
+import { discardOutboxItem, resolveConflictKeepMine } from "@/offline/sync-engine";
 import type { OfflineSyncState } from "@/offline/use-offline-sync";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
+/** Fields compared in the local-vs-server diff for project.update conflicts. */
+const DIFF_FIELDS = ["title", "status", "currentGate", "targetEndDate", "description"] as const;
+
+function ConflictDiff({ op }: { op: OutboxItem }): JSX.Element | null {
+  if (op.kind !== "project.update") return null;
+  const mine = (op.payload as { patch?: Record<string, unknown> }).patch ?? {};
+  const theirs = (op.serverState ?? {}) as Record<string, unknown>;
+  const rows = DIFF_FIELDS.filter((f) => mine[f] !== undefined);
+  if (rows.length === 0) return null;
+  return (
+    <table className="mt-1.5 w-full text-[10px]">
+      <thead>
+        <tr className="th-band text-left">
+          <th className="px-1.5 py-0.5">Field</th>
+          <th className="px-1.5 py-0.5">Mine (offline)</th>
+          <th className="px-1.5 py-0.5">Server</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((f) => (
+          <tr key={f} className="border-t align-top">
+            <td className="meta px-1.5 py-0.5 text-muted-foreground">{f}</td>
+            <td className="px-1.5 py-0.5">{String(mine[f]).slice(0, 60)}</td>
+            <td className="px-1.5 py-0.5">{String(theirs[f] ?? "—").slice(0, 60)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 const KIND_LABEL: Record<OutboxItem["kind"], string> = {
   "project.update": "Project edit",
@@ -92,7 +123,31 @@ export function SyncTray({ sync }: { sync: OfflineSyncState }): JSX.Element {
                 {op.lastError ? (
                   <p className="mt-1 text-muted-foreground">{op.lastError}</p>
                 ) : null}
-                {op.status !== "pending" ? (
+                {op.status === "conflict" ? (
+                  <>
+                    <ConflictDiff op={op} />
+                    <div className="mt-1.5 flex justify-end gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-6"
+                        onClick={() =>
+                          void resolveConflictKeepMine(op.clientOpId).then(() => sync.flushNow())
+                        }
+                      >
+                        Keep mine
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-destructive"
+                        onClick={() => void discardOutboxItem(op.clientOpId)}
+                      >
+                        Keep theirs
+                      </Button>
+                    </div>
+                  </>
+                ) : op.status === "rejected" ? (
                   <div className="mt-1.5 flex justify-end">
                     <Button
                       size="sm"

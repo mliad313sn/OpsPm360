@@ -77,3 +77,51 @@
     border: none;
   }
 }
+
+/* ── Accessibility (WCAG 2.1 AA hardening) ─────────────────────────────────── */
+
+/* Visible focus for every interactive element, keyboard-first. */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Vestibular safety: collapse animation when the OS asks for it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* High-contrast mode — also serves bright-sunlight field conditions on site. */
+@media (prefers-contrast: more) {
+  :root {
+    --foreground: 220 60% 6%;
+    --muted-foreground: 217 25% 25%;
+    --border: 215 25% 55%;
+    --input: 215 25% 45%;
+  }
+  .glass {
+    border-width: 2px;
+  }
+}
+
+.skip-link {
+  @apply sr-only;
+}
+.skip-link:focus {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  width: auto;
+  height: auto;
+  clip: auto;
+  white-space: normal;
+  @apply rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground;
+}

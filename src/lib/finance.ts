@@ -157,6 +157,48 @@ export function localToUsd(amountLocal: number, fxRateToBase: number): number {
   return fromCents(toCents(amountLocal / fxRateToBase));
 }
 
+// ─── EAC / ETC forecasting (Tier-1 upgrade) ──────────────────────────────────
+
+export interface ForecastReport {
+  /** Estimate at Completion: AC + (BAC − EV) / CPI. */
+  eacUSD: number;
+  /** Estimate to Complete: EAC − AC. */
+  etcUSD: number;
+  /** Variance at Completion: BAC − EAC (negative = projected overrun). */
+  vacUSD: number;
+  /** "cpi" when CPI-informed; "baseline" when no cost signal exists yet. */
+  basis: "cpi" | "baseline";
+}
+
+/**
+ * CPI-trend cost forecast. With no spend or earned value yet there is no
+ * performance signal, so the forecast falls back to the baseline (EAC = BAC).
+ */
+export function computeForecast(input: {
+  budgetAtCompletionUSD: number;
+  earnedValueUSD: number;
+  actualCostUSD: number;
+}): ForecastReport {
+  const bac = Number.isFinite(input.budgetAtCompletionUSD)
+    ? Math.max(0, input.budgetAtCompletionUSD)
+    : 0;
+  const ev = Number.isFinite(input.earnedValueUSD) ? Math.max(0, input.earnedValueUSD) : 0;
+  const ac = Number.isFinite(input.actualCostUSD) ? Math.max(0, input.actualCostUSD) : 0;
+
+  const cpi = ac > 0 && ev > 0 ? ev / ac : null;
+  if (cpi === null) {
+    return { eacUSD: bac, etcUSD: fromCents(toCents(bac) - toCents(ac)), vacUSD: 0, basis: "baseline" };
+  }
+
+  const eac = fromCents(toCents(ac) + Math.round(((bac - ev) / cpi) * 100));
+  return {
+    eacUSD: eac,
+    etcUSD: fromCents(toCents(eac) - toCents(ac)),
+    vacUSD: fromCents(toCents(bac) - toCents(eac)),
+    basis: "cpi",
+  };
+}
+
 const CURRENCY_LOCALE: Record<LocalCurrency, { locale: string; minimumFractionDigits: number }> = {
   USD: { locale: "en-US", minimumFractionDigits: 0 },
   EUR: { locale: "de-DE", minimumFractionDigits: 0 },

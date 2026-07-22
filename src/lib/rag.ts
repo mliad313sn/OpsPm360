@@ -170,11 +170,33 @@ function worst(a: Rag, b: Rag): Rag {
   return order[a] <= order[b] ? a : b;
 }
 
+export interface EvaSignal {
+  cpi: number | null; // EV/AC — cost efficiency
+  spi: number | null; // EV/PV — schedule efficiency
+}
+
+/** Below this efficiency index the project cannot be GREEN (PMBOK practice). */
+export const EVA_AMBER_THRESHOLD = 0.85;
+
+export interface RiskInput {
+  score: number; // probability × impact (1..25)
+  status: "OPEN" | "MITIGATING" | "REALIZED" | "CLOSED";
+  hasMitigation: boolean;
+  potentialLossUSD: number;
+}
+
+/** ≥2 unmitigated high risks (score ≥15) force RED. */
+export const UNMITIGATED_HIGH_RISK_RED_COUNT = 2;
+/** Active risk exposure above 25% of budget caps health at AMBER. */
+export const RISK_EXPOSURE_AMBER_RATIO = 0.25;
+
 export function computeRag(
   input: {
     milestones: readonly MilestoneInput[];
     blockers: readonly BlockerInput[];
     financials: FinancialInput | null;
+    eva?: EvaSignal;
+    risks?: readonly RiskInput[];
   },
   now: Date = new Date()
 ): RagResult {
@@ -216,6 +238,43 @@ export function computeRag(
     rag = worst(rag, "RED");
     reasons.push("Spend recorded against zero budget — forced RED");
   }
+  // Earned-value efficiency: burning money or time faster than value is
+  // earned caps health at AMBER regardless of the subjective-looking score.
+  const cpi = input.eva?.cpi ?? null;
+  const spi = input.eva?.spi ?? null;
+  if (cpi !== null && Number.isFinite(cpi) && cpi < EVA_AMBER_THRESHOLD) {
+    rag = worst(rag, "AMBER");
+    reasons.push(`CPI ${cpi.toFixed(2)} (<${EVA_AMBER_THRESHOLD}) — cost efficiency caps at AMBER`);
+  }
+  if (spi !== null && Number.isFinite(spi) && spi < EVA_AMBER_THRESHOLD) {
+    rag = worst(rag, "AMBER");
+    reasons.push(`SPI ${spi.toFixed(2)} (<${EVA_AMBER_THRESHOLD}) — schedule efficiency caps at AMBER`);
+  }
+  // Proactive risk posture (register hard rules).
+  if (input.risks && input.risks.length > 0) {
+    const active = input.risks.filter((r) => r.status === "OPEN" || r.status === "MITIGATING");
+    const unmitigatedHigh = active.filter((r) => r.score >= 15 && !r.hasMitigation);
+    if (unmitigatedHigh.length >= UNMITIGATED_HIGH_RISK_RED_COUNT) {
+      rag = worst(rag, "RED");
+      reasons.push(
+        `${unmitigatedHigh.length} unmitigated high risks (score ≥15) — forced RED`
+      );
+    }
+    if (input.financials && input.financials.totalBudgetUSD > 0) {
+      const exposure = active.reduce(
+        (acc, r) =>
+          acc + (Number.isFinite(r.potentialLossUSD) ? Math.max(0, r.potentialLossUSD) : 0),
+        0
+      );
+      const ratio = exposure / input.financials.totalBudgetUSD;
+      if (ratio > RISK_EXPOSURE_AMBER_RATIO) {
+        rag = worst(rag, "AMBER");
+        reasons.push(
+          `Risk exposure ${(ratio * 100).toFixed(0)}% of budget (>25%) — at best AMBER`
+        );
+      }
+    }
+  }
 
   if (reasons.length === 0) {
     reasons.push(`Weighted health score H=${score.toFixed(0)}/100`);
@@ -234,4 +293,40 @@ export function computeRag(
 /** Effective RAG shown to users: manual override (with audit trail) beats calculated. */
 export function effectiveRag(calculated: Rag, override: Rag | null | undefined): Rag {
   return override ?? calculated;
+}
+
+// ─── Portfolio rollup (Tier-1 upgrade) ───────────────────────────────────────
+
+const BAND_MIDPOINT: Record<Rag, number> = { GREEN: 95, AMBER: 65, RED: 30 };
+
+export interface PortfolioHealth {
+  score: number; // 0..100 budget-weighted aggregate
+  rag: Rag;
+  weightedByBudget: boolean;
+}
+
+/**
+ * Single "health of the portfolio" indicator: RAG band midpoints weighted by
+ * project budget (bigger budgets move the needle more). Falls back to equal
+ * weighting when no project has a budget. Empty portfolio = healthy.
+ */
+export function portfolioHealth(
+  items: readonly { rag: Rag; budgetUSD: number }[]
+): PortfolioHealth {
+  if (items.length === 0) return { score: 100, rag: "GREEN", weightedByBudget: false };
+
+  const totalBudget = items.reduce(
+    (acc, i) => acc + (Number.isFinite(i.budgetUSD) ? Math.max(0, i.budgetUSD) : 0),
+    0
+  );
+  const weightedByBudget = totalBudget > 0;
+
+  let weighted = 0;
+  for (const i of items) {
+    const w = weightedByBudget ? Math.max(0, i.budgetUSD) / totalBudget : 1 / items.length;
+    weighted += w * BAND_MIDPOINT[i.rag];
+  }
+
+  const score = Math.round(weighted * 10) / 10;
+  return { score, rag: scoreToRag(score), weightedByBudget };
 }

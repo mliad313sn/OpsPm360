@@ -87,8 +87,14 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r bg-card md:flex">
+      <aside
+        aria-label="Primary navigation"
+        className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r bg-card md:flex"
+      >
         <div className="flex items-center gap-2.5 px-5 pb-2 pt-5">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Mountain className="h-5 w-5" aria-hidden />
@@ -173,7 +179,9 @@ export function AppShell({
             </Button>
           </form>
         </header>
-        <main className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">{children}</main>
+        <main id="main-content" className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">
+          {children}
+        </main>
       </div>
     </div>
   );

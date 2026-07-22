@@ -5,10 +5,19 @@ import { auditHistory } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { AppShell } from "@/components/app-shell";
 import { GateStepper } from "@/components/projects/gate-stepper";
+import { DependenciesCard } from "@/components/projects/dependencies-card";
 import { ProjectActions } from "@/components/projects/project-actions";
+import { projectReadScope } from "@/lib/rbac";
+import { withUserDb } from "@/server/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, RagBadge } from "@/components/ui/badge";
-import { computeEva, formatMoney, formatMoneyCompact, usdToLocal } from "@/lib/finance";
+import {
+  computeEva,
+  computeForecast,
+  formatMoney,
+  formatMoneyCompact,
+  usdToLocal,
+} from "@/lib/finance";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +40,16 @@ export default async function ProjectDetailPage({
   ]);
   if (!project) notFound();
 
-  const audit = await auditHistory("Project", project.id, 20);
+  const [audit, linkableProjects] = await Promise.all([
+    auditHistory("Project", project.id, 20),
+    withUserDb(user, (db) =>
+      db.project.findMany({
+        where: { ...projectReadScope(user), id: { not: project.id } },
+        select: { id: true, code: true, title: true },
+        orderBy: { code: "asc" },
+      })
+    ),
+  ]);
   const fin = project.financialDetail;
 
   const eva = computeEva(
@@ -141,6 +159,23 @@ export default async function ProjectDetailPage({
                 {eva.spi !== null ? ` · SPI ${eva.spi.toFixed(2)}` : ""}
                 {eva.cpi !== null ? ` · CPI ${eva.cpi.toFixed(2)}` : ""}
               </p>
+              {(() => {
+                const forecast = computeForecast({
+                  budgetAtCompletionUSD: project.totalBudgetUSD,
+                  earnedValueUSD: eva.earnedValueUSD,
+                  actualCostUSD: eva.actualCostUSD,
+                });
+                return (
+                  <p className="tabular mt-1 text-xs text-muted-foreground">
+                    Forecast{forecast.basis === "cpi" ? " (CPI-trend)" : " (baseline)"} — EAC{" "}
+                    {formatMoneyCompact(forecast.eacUSD)} · ETC{" "}
+                    {formatMoneyCompact(forecast.etcUSD)} ·{" "}
+                    <span className={forecast.vacUSD < 0 ? "text-rag-red" : "text-rag-green"}>
+                      VAC {formatMoneyCompact(forecast.vacUSD)}
+                    </span>
+                  </p>
+                );
+              })()}
             </CardContent>
           </Card>
 
@@ -220,6 +255,20 @@ export default async function ProjectDetailPage({
         <ProjectActions
           projectId={project.id}
           currentGate={project.currentGate}
+          totalBudgetUSD={project.totalBudgetUSD}
+          totalActualUSD={project.totalActualUSD}
+          risks={project.risks.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            category: r.category,
+            probability: r.probability,
+            impact: r.impact,
+            potentialLossUSD: r.potentialLossUSD,
+            mitigation: r.mitigation,
+            status: r.status,
+            raisedByName: r.raisedByName,
+          }))}
           blockers={project.blockers.map((b) => ({
             id: b.id,
             title: b.title,
@@ -238,6 +287,14 @@ export default async function ProjectDetailPage({
             requestedByName: s.requestedByName,
           }))}
           canSteer={user.role === "GROUP_IT_MANAGER" || user.role === "SYSTEM_ADMIN"}
+          canWrite={user.role !== "EXEC_STAKEHOLDER"}
+        />
+
+        <DependenciesCard
+          projectId={project.id}
+          upstreamDeps={project.upstreamDeps}
+          downstreamDepCount={project.downstreamDepCount}
+          linkableProjects={linkableProjects}
           canWrite={user.role !== "EXEC_STAKEHOLDER"}
         />
 

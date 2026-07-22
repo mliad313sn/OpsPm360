@@ -11,7 +11,10 @@ import type { Role } from "@prisma/client";
 const scrypt = promisify(scryptCb);
 
 const SESSION_COOKIE = "opspm_session";
-const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12h shifts
+/** Short-lived access token; silently re-minted by middleware while the
+ * refresh window is open. Enterprise pattern: 15m access / 7d refresh. */
+export const ACCESS_TTL_SECONDS = 15 * 60;
+export const REFRESH_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
 export interface SessionUser {
   id: string;
@@ -53,23 +56,26 @@ export async function verifyPassword(password: string, stored: string): Promise<
 // ─── Session tokens ──────────────────────────────────────────────────────────
 
 export async function createSession(user: SessionUser): Promise<void> {
+  const nowSec = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({
     email: user.email,
     name: user.name,
     role: user.role,
     siteId: user.siteId,
+    // Hard ceiling for silent refresh; after this the user must log in again.
+    refreshUntil: nowSec + REFRESH_WINDOW_SECONDS,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(user.id)
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
+    .setExpirationTime(`${ACCESS_TTL_SECONDS}s`)
     .sign(getSecret());
 
   cookies().set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: REFRESH_WINDOW_SECONDS,
     path: "/",
   });
 }

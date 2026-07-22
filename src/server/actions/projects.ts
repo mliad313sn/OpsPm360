@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import {
   assertProjectCreate,
@@ -19,6 +18,7 @@ import {
   updateProjectSchema,
 } from "@/lib/validators";
 import { isGate, missingGateItems, nextGate } from "@/lib/gates";
+import { withUserDb } from "@/server/db";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -52,7 +52,7 @@ export async function createProjectAction(
 
     const siteId = input.scopeType === "GROUP" ? null : input.siteId;
 
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await withUserDb(user, async (tx) => {
       const code = await nextProjectCode(tx, input.scopeType, siteId, input.startDate.getFullYear());
 
       const project = await tx.project.create({
@@ -112,21 +112,18 @@ export async function updateProjectAction(raw: unknown): Promise<ActionResult> {
     const user = await requireSession();
     const input = updateProjectSchema.parse(raw);
 
-    const project = await prisma.project.findFirst({
-      where: { id: input.projectId, ...projectReadScope(user) },
-    });
-    if (!project) return { ok: false, error: "Project not found" };
-    assertProjectWrite(user, project);
+    const outcome = await withUserDb(user, async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return { kind: "not-found" as const };
+      assertProjectWrite(user, project);
 
-    // Optimistic concurrency: reject stale writes (offline clients rebase via /api/sync).
-    if (project.syncVersion !== input.expectedSyncVersion) {
-      return {
-        ok: false,
-        error: `Project was modified by someone else (v${project.syncVersion}). Refresh and retry.`,
-      };
-    }
+      // Optimistic concurrency: reject stale writes (offline clients rebase via /api/sync).
+      if (project.syncVersion !== input.expectedSyncVersion) {
+        return { kind: "stale" as const, serverVersion: project.syncVersion };
+      }
 
-    await prisma.$transaction(async (tx) => {
       const updated = await tx.project.update({
         where: { id: project.id },
         data: { ...input.patch, syncVersion: { increment: 1 } },
@@ -152,10 +149,19 @@ export async function updateProjectAction(raw: unknown): Promise<ActionResult> {
         },
         tx
       );
+      return { kind: "ok" as const, projectId: project.id };
     });
 
+    if (outcome.kind === "not-found") return { ok: false, error: "Project not found" };
+    if (outcome.kind === "stale") {
+      return {
+        ok: false,
+        error: `Project was modified by someone else (v${outcome.serverVersion}). Refresh and retry.`,
+      };
+    }
+
     revalidatePath("/");
-    revalidatePath(`/projects/${project.id}`);
+    revalidatePath(`/projects/${outcome.projectId}`);
     return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err);
@@ -174,42 +180,41 @@ export async function advanceGateAction(
     const user = await requireSession();
     const input = advanceGateSchema.parse(raw);
 
-    const project = await prisma.project.findFirst({
-      where: { id: input.projectId, ...projectReadScope(user) },
-    });
-    if (!project) return { ok: false, error: "Project not found" };
-    assertProjectWrite(user, project);
+    const outcome = await withUserDb(user, async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return { error: "Project not found" };
+      assertProjectWrite(user, project);
 
-    if (!isGate(project.currentGate)) {
-      return { ok: false, error: `Unknown gate: ${project.currentGate}` };
-    }
-    const target = nextGate(project.currentGate);
-    if (!target) return { ok: false, error: "Project is already CLOSED" };
+      if (!isGate(project.currentGate)) {
+        return { error: `Unknown gate: ${project.currentGate}` };
+      }
+      const target = nextGate(project.currentGate);
+      if (!target) return { error: "Project is already CLOSED" };
 
-    const missing = missingGateItems(project.currentGate, input.checklist);
-    if (missing.length > 0) {
-      return {
-        ok: false,
-        error: `Gate exit blocked — outstanding items: ${missing.map((m) => m.label).join("; ")}`,
-      };
-    }
+      const missing = missingGateItems(project.currentGate, input.checklist);
+      if (missing.length > 0) {
+        return {
+          error: `Gate exit blocked — outstanding items: ${missing.map((m) => m.label).join("; ")}`,
+        };
+      }
 
-    const existingSnapshots: Record<string, unknown> =
-      project.gateChecklists &&
-      typeof project.gateChecklists === "object" &&
-      !Array.isArray(project.gateChecklists)
-        ? { ...(project.gateChecklists as Record<string, unknown>) }
-        : {};
-    const nextSnapshots = {
-      ...existingSnapshots,
-      [project.currentGate]: {
-        answers: input.checklist,
-        completedAt: new Date().toISOString(),
-        byUserId: user.id,
-      },
-    } as Prisma.InputJsonValue;
+      const existingSnapshots: Record<string, unknown> =
+        project.gateChecklists &&
+        typeof project.gateChecklists === "object" &&
+        !Array.isArray(project.gateChecklists)
+          ? { ...(project.gateChecklists as Record<string, unknown>) }
+          : {};
+      const nextSnapshots = {
+        ...existingSnapshots,
+        [project.currentGate]: {
+          answers: input.checklist,
+          completedAt: new Date().toISOString(),
+          byUserId: user.id,
+        },
+      } as Prisma.InputJsonValue;
 
-    await prisma.$transaction(async (tx) => {
       await tx.project.update({
         where: { id: project.id },
         data: {
@@ -229,12 +234,15 @@ export async function advanceGateAction(
         },
         tx
       );
+      return { target, projectId: project.id };
     });
 
-    revalidatePath(`/projects/${project.id}`);
+    if (outcome.error !== undefined) return { ok: false, error: outcome.error };
+
+    revalidatePath(`/projects/${outcome.projectId}`);
     revalidatePath("/");
     revalidatePath("/board");
-    return { ok: true, data: { newGate: target } };
+    return { ok: true, data: { newGate: outcome.target } };
   } catch (err) {
     return toActionError(err);
   }
@@ -247,12 +255,12 @@ export async function overrideRagAction(raw: unknown): Promise<ActionResult> {
     assertSteeringAuthority(user);
     const input = ragOverrideSchema.parse(raw);
 
-    const project = await prisma.project.findFirst({
-      where: { id: input.projectId, ...projectReadScope(user) },
-    });
-    if (!project) return { ok: false, error: "Project not found" };
+    const found = await withUserDb(user, async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return null;
 
-    await prisma.$transaction(async (tx) => {
       await tx.project.update({
         where: { id: project.id },
         data: {
@@ -274,11 +282,14 @@ export async function overrideRagAction(raw: unknown): Promise<ActionResult> {
         },
         tx
       );
+      return project.id;
     });
+
+    if (!found) return { ok: false, error: "Project not found" };
 
     revalidatePath("/");
     revalidatePath("/meeting");
-    revalidatePath(`/projects/${project.id}`);
+    revalidatePath(`/projects/${found}`);
     return { ok: true, data: undefined };
   } catch (err) {
     return toActionError(err);

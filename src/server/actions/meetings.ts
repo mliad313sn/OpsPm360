@@ -8,6 +8,8 @@ import { assertSteeringAuthority, projectReadScope, toActionError } from "@/lib/
 import { writeAudit } from "@/lib/audit";
 import { recordDecisionSchema } from "@/lib/validators";
 import { type ActionResult } from "@/server/actions/projects";
+import { withUserDb } from "@/server/db";
+import { notifyDecision } from "@/lib/notify";
 
 export async function startMeetingAction(): Promise<ActionResult<{ meetingId: string }>> {
   try {
@@ -52,15 +54,15 @@ export async function recordDecisionAction(raw: unknown): Promise<ActionResult> 
     assertSteeringAuthority(user);
     const input = recordDecisionSchema.parse(raw);
 
-    const [meeting, project] = await Promise.all([
-      prisma.reviewMeeting.findUnique({ where: { id: input.meetingId } }),
-      prisma.project.findFirst({ where: { id: input.projectId, ...projectReadScope(user) } }),
-    ]);
-    if (!meeting) return { ok: false, error: "Meeting not found" };
-    if (meeting.closedAt) return { ok: false, error: "Meeting is already closed" };
-    if (!project) return { ok: false, error: "Project not found" };
+    const outcome = await withUserDb(user, async (tx) => {
+      const meeting = await tx.reviewMeeting.findUnique({ where: { id: input.meetingId } });
+      if (!meeting) return { error: "Meeting not found" };
+      if (meeting.closedAt) return { error: "Meeting is already closed" };
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return { error: "Project not found" };
 
-    await prisma.$transaction(async (tx) => {
       const decision = await tx.meetingDecision.create({
         data: {
           meetingId: meeting.id,
@@ -85,7 +87,21 @@ export async function recordDecisionAction(raw: unknown): Promise<ActionResult> 
         },
         tx
       );
+      return { projectCode: project.code };
     });
+
+    if (outcome.error !== undefined) return { ok: false, error: outcome.error };
+
+    // Action-item dispatch: decisions don't die in the minutes (webhook →
+    // Slack/Teams/ITSM intake). Fire-and-forget; delivery never blocks the record.
+    if (input.decisionType !== "NOTE") {
+      await notifyDecision({
+        projectCode: outcome.projectCode,
+        decisionType: input.decisionType,
+        actionTaken: input.actionTaken,
+        decidedBy: user.name,
+      });
+    }
 
     revalidatePath("/meeting");
     return { ok: true, data: undefined };
@@ -103,25 +119,24 @@ export async function closeMeetingAction(
     assertSteeringAuthority(user);
     const meetingId = z.string().cuid().parse(rawMeetingId);
 
-    const meeting = await prisma.reviewMeeting.findUnique({
-      where: { id: meetingId },
-      include: {
-        chairedBy: { select: { name: true } },
-        decisions: {
-          include: {
-            project: { select: { code: true, title: true } },
-            signedOffBy: { select: { name: true } },
+    const meeting = await withUserDb(user, async (tx) => {
+      const found = await tx.reviewMeeting.findUnique({
+        where: { id: meetingId },
+        include: {
+          chairedBy: { select: { name: true } },
+          decisions: {
+            include: {
+              project: { select: { code: true, title: true } },
+              signedOffBy: { select: { name: true } },
+            },
+            orderBy: { createdAt: "asc" },
           },
-          orderBy: { createdAt: "asc" },
         },
-      },
-    });
-    if (!meeting) return { ok: false, error: "Meeting not found" };
-    if (meeting.closedAt) return { ok: false, error: "Meeting is already closed" };
+      });
+      if (!found || found.closedAt) return found;
 
-    await prisma.$transaction(async (tx) => {
       await tx.reviewMeeting.update({
-        where: { id: meeting.id },
+        where: { id: found.id },
         data: { closedAt: new Date() },
       });
       await writeAudit(
@@ -129,13 +144,17 @@ export async function closeMeetingAction(
           userId: user.id,
           action: "UPDATE",
           entityType: "ReviewMeeting",
-          entityId: meeting.id,
+          entityId: found.id,
           previous: { closedAt: null },
-          next: { closedAt: new Date(), decisionCount: meeting.decisions.length },
+          next: { closedAt: new Date(), decisionCount: found.decisions.length },
         },
         tx
       );
+      return found;
     });
+
+    if (!meeting) return { ok: false, error: "Meeting not found" };
+    if (meeting.closedAt) return { ok: false, error: "Meeting is already closed" };
 
     const lines: string[] = [
       `# Steering Committee Minutes`,

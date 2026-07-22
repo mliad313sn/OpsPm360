@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { assertProjectWrite, projectReadScope, toActionError } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { createBlockerSchema, resolveBlockerSchema } from "@/lib/validators";
 import { type ActionResult } from "@/server/actions/projects";
 import { recalculateRag } from "@/server/rag-service";
+import { withUserDb } from "@/server/db";
 
 export async function createBlockerAction(
   raw: unknown
@@ -16,13 +16,13 @@ export async function createBlockerAction(
     const user = await requireSession();
     const input = createBlockerSchema.parse(raw);
 
-    const project = await prisma.project.findFirst({
-      where: { id: input.projectId, ...projectReadScope(user) },
-    });
-    if (!project) return { ok: false, error: "Project not found" };
-    assertProjectWrite(user, project);
+    const outcome = await withUserDb(user, async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return null;
+      assertProjectWrite(user, project);
 
-    const blocker = await prisma.$transaction(async (tx) => {
       const created = await tx.blocker.create({
         data: {
           projectId: project.id,
@@ -43,13 +43,15 @@ export async function createBlockerAction(
         },
         tx
       );
-      return created;
+      return { blockerId: created.id, projectId: project.id };
     });
 
-    await recalculateRag([project.id]);
-    revalidatePath(`/projects/${project.id}`);
+    if (!outcome) return { ok: false, error: "Project not found" };
+
+    await recalculateRag([outcome.projectId]);
+    revalidatePath(`/projects/${outcome.projectId}`);
     revalidatePath("/meeting");
-    return { ok: true, data: { blockerId: blocker.id } };
+    return { ok: true, data: { blockerId: outcome.blockerId } };
   } catch (err) {
     return toActionError(err);
   }
@@ -60,18 +62,18 @@ export async function resolveBlockerAction(raw: unknown): Promise<ActionResult> 
     const user = await requireSession();
     const input = resolveBlockerSchema.parse(raw);
 
-    const blocker = await prisma.blocker.findFirst({
-      where: { id: input.blockerId, project: projectReadScope(user) },
-      include: { project: true },
-    });
-    if (!blocker) return { ok: false, error: "Blocker not found" };
-    assertProjectWrite(user, blocker.project);
+    const outcome = await withUserDb(user, async (tx) => {
+      const blocker = await tx.blocker.findFirst({
+        where: { id: input.blockerId, project: projectReadScope(user) },
+        include: { project: true },
+      });
+      if (!blocker) return { error: "Blocker not found" };
+      assertProjectWrite(user, blocker.project);
 
-    if (blocker.status === "RESOLVED") {
-      return { ok: false, error: "Blocker is already resolved" };
-    }
+      if (blocker.status === "RESOLVED") {
+        return { error: "Blocker is already resolved" };
+      }
 
-    await prisma.$transaction(async (tx) => {
       await tx.blocker.update({
         where: { id: blocker.id },
         data: {
@@ -91,10 +93,13 @@ export async function resolveBlockerAction(raw: unknown): Promise<ActionResult> 
         },
         tx
       );
+      return { projectId: blocker.projectId };
     });
 
-    await recalculateRag([blocker.projectId]);
-    revalidatePath(`/projects/${blocker.projectId}`);
+    if (outcome.error !== undefined) return { ok: false, error: outcome.error };
+
+    await recalculateRag([outcome.projectId]);
+    revalidatePath(`/projects/${outcome.projectId}`);
     revalidatePath("/meeting");
     return { ok: true, data: undefined };
   } catch (err) {

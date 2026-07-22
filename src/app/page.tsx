@@ -6,7 +6,9 @@ import { prisma } from "@/lib/prisma";
 import { AppShell } from "@/components/app-shell";
 import { PortfolioTable } from "@/components/portfolio-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { RagBadge } from "@/components/ui/badge";
 import { formatMoneyCompact } from "@/lib/finance";
+import { portfolioHealth } from "@/lib/rag";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +66,26 @@ export default async function DashboardPage(): Promise<JSX.Element> {
         </div>
 
         {/* KPI band */}
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+          <Card>
+            <CardContent className="p-4">
+              {(() => {
+                const health = portfolioHealth(
+                  active.map((p) => ({ rag: p.rag, budgetUSD: p.totalBudgetUSD }))
+                );
+                return (
+                  <>
+                    <p className="stat-label">Portfolio health (budget-weighted)</p>
+                    <p className="tabular mt-2 flex items-center gap-2 font-display text-2xl font-bold">
+                      {health.score.toFixed(0)}
+                      <span className="text-sm font-normal text-muted-foreground">/100</span>
+                      <RagBadge rag={health.rag} />
+                    </p>
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
           <Card>
             <CardContent className="p-4">
               <p className="stat-label">Portfolio budget vs actuals</p>

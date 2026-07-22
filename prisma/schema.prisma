@@ -90,6 +90,29 @@ enum ApprovalStatus {
   REJECTED
 }
 
+enum RiskStatus {
+  OPEN
+  MITIGATING
+  REALIZED
+  CLOSED
+}
+
+enum RiskCategory {
+  FINANCIAL
+  TECHNICAL
+  SAFETY
+  SUPPLY_CHAIN
+  ENVIRONMENTAL
+  REGULATORY
+}
+
+enum DependencyType {
+  FINISH_TO_START
+  START_TO_START
+  FINISH_TO_FINISH
+  START_TO_FINISH
+}
+
 enum DecisionType {
   UNBLOCK
   SCOPE_APPROVED
@@ -147,6 +170,7 @@ model User {
   site               Site?                @relation(fields: [siteId], references: [id])
   ownedProjects      Project[]            @relation("ProjectOwner")
   raisedBlockers     Blocker[]            @relation("BlockerRaisedBy")
+  raisedRisks        Risk[]               @relation("RiskRaisedBy")
   assignedBlockers   Blocker[]            @relation("BlockerAssignee")
   scopeRequests      ScopeChangeRequest[] @relation("ScopeRequestedBy")
   scopeApprovals     ScopeChangeRequest[] @relation("ScopeApprovedBy")
@@ -189,11 +213,14 @@ model Project {
 
   site         Site?               @relation(fields: [siteId], references: [id])
   owner        User                @relation("ProjectOwner", fields: [ownerId], references: [id])
-  financials   ProjectFinancials?
-  milestones   Milestone[]
-  blockers     Blocker[]
-  scopeChanges ScopeChangeRequest[]
-  decisions    MeetingDecision[]
+  financials      ProjectFinancials?
+  milestones      Milestone[]
+  blockers        Blocker[]
+  risks           Risk[]
+  scopeChanges    ScopeChangeRequest[]
+  decisions       MeetingDecision[]
+  downstreamDeps  ProjectDependency[] @relation("PredecessorDeps")
+  upstreamDeps    ProjectDependency[] @relation("SuccessorDeps")
 
   @@index([siteId])
   @@index([status])
@@ -252,9 +279,10 @@ model Blocker {
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
-  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  raisedBy   User    @relation("BlockerRaisedBy", fields: [raisedById], references: [id])
-  assignedTo User?   @relation("BlockerAssignee", fields: [assignedToId], references: [id])
+  project              Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  raisedBy             User    @relation("BlockerRaisedBy", fields: [raisedById], references: [id])
+  assignedTo           User?   @relation("BlockerAssignee", fields: [assignedToId], references: [id])
+  materializedFromRisk Risk?   @relation("RiskMaterialized")
 
   @@index([projectId, status])
   @@index([status, severity])
@@ -279,6 +307,52 @@ model ScopeChangeRequest {
   approvedBy  User?   @relation("ScopeApprovedBy", fields: [approvedById], references: [id])
 
   @@index([projectId, status])
+}
+
+// Proactive risk register (PMBOK probability × impact), distinct from
+// blockers: risks MIGHT happen; blockers ARE happening.
+model Risk {
+  id                    String       @id @default(cuid())
+  projectId             String
+  raisedById            String
+  title                 String
+  description           String
+  category              RiskCategory @default(TECHNICAL)
+  probability           Int // 1 (rare) .. 5 (almost certain)
+  impact                Int // 1 (negligible) .. 5 (severe)
+  // Financial exposure if the risk materializes (USD, integer-cent semantics).
+  potentialLossUSD      Decimal      @default(0) @db.Decimal(16, 2)
+  mitigation            String?
+  contingencyPlan       String?
+  status                RiskStatus   @default(OPEN)
+  // Set when the risk materializes into an active blocker.
+  materializedBlockerId String?      @unique
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  raisedBy            User     @relation("RiskRaisedBy", fields: [raisedById], references: [id])
+  materializedBlocker Blocker? @relation("RiskMaterialized", fields: [materializedBlockerId], references: [id])
+
+  @@index([projectId, status])
+}
+
+// Cross-project dependency edge (project-level DAG; cycle-checked on write).
+model ProjectDependency {
+  id                   String         @id @default(cuid())
+  predecessorProjectId String
+  successorProjectId   String
+  dependencyType       DependencyType @default(FINISH_TO_START)
+  lagDays              Int            @default(0) // positive = lag, negative = lead
+  isCrossSite          Boolean        @default(false)
+  createdById          String
+  createdAt            DateTime       @default(now())
+
+  predecessorProject Project @relation("PredecessorDeps", fields: [predecessorProjectId], references: [id], onDelete: Cascade)
+  successorProject   Project @relation("SuccessorDeps", fields: [successorProjectId], references: [id], onDelete: Cascade)
+
+  @@unique([predecessorProjectId, successorProjectId])
+  @@index([successorProjectId])
 }
 
 // ─── Steering Committee ──────────────────────────────────────────────────────

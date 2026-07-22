@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import {
   assertProjectWrite,
@@ -12,7 +11,10 @@ import {
 } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { createScopeChangeSchema, decideScopeChangeSchema } from "@/lib/validators";
+import { downstreamOf } from "@/lib/graph";
 import { type ActionResult } from "@/server/actions/projects";
+import { recalculateRag } from "@/server/rag-service";
+import { withSystemDb, withUserDb } from "@/server/db";
 
 export async function createScopeChangeAction(
   raw: unknown
@@ -21,13 +23,13 @@ export async function createScopeChangeAction(
     const user = await requireSession();
     const input = createScopeChangeSchema.parse(raw);
 
-    const project = await prisma.project.findFirst({
-      where: { id: input.projectId, ...projectReadScope(user) },
-    });
-    if (!project) return { ok: false, error: "Project not found" };
-    assertProjectWrite(user, project);
+    const outcome = await withUserDb(user, async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: input.projectId, ...projectReadScope(user) },
+      });
+      if (!project) return null;
+      assertProjectWrite(user, project);
 
-    const request = await prisma.$transaction(async (tx) => {
       const created = await tx.scopeChangeRequest.create({
         data: {
           projectId: project.id,
@@ -51,11 +53,13 @@ export async function createScopeChangeAction(
         },
         tx
       );
-      return created;
+      return { requestId: created.id, projectId: project.id };
     });
 
-    revalidatePath(`/projects/${project.id}`);
-    return { ok: true, data: { requestId: request.id } };
+    if (!outcome) return { ok: false, error: "Project not found" };
+
+    revalidatePath(`/projects/${outcome.projectId}`);
+    return { ok: true, data: { requestId: outcome.requestId } };
   } catch (err) {
     return toActionError(err);
   }
@@ -71,16 +75,16 @@ export async function decideScopeChangeAction(raw: unknown): Promise<ActionResul
     assertSteeringAuthority(user);
     const input = decideScopeChangeSchema.parse(raw);
 
-    const request = await prisma.scopeChangeRequest.findFirst({
-      where: { id: input.requestId, project: projectReadScope(user) },
-      include: { project: { include: { financials: true } } },
-    });
-    if (!request) return { ok: false, error: "Scope change request not found" };
-    if (request.status !== "PENDING") {
-      return { ok: false, error: `Request already ${request.status.toLowerCase()}` };
-    }
+    const outcome = await withUserDb(user, async (tx) => {
+      const request = await tx.scopeChangeRequest.findFirst({
+        where: { id: input.requestId, project: projectReadScope(user) },
+        include: { project: { include: { financials: true } } },
+      });
+      if (!request) return { error: "Scope change request not found" };
+      if (request.status !== "PENDING") {
+        return { error: `Request already ${request.status.toLowerCase()}` };
+      }
 
-    await prisma.$transaction(async (tx) => {
       await tx.scopeChangeRequest.update({
         where: { id: request.id },
         data: {
@@ -92,7 +96,6 @@ export async function decideScopeChangeAction(raw: unknown): Promise<ActionResul
       });
 
       if (input.approve) {
-        // Apply schedule impact.
         const newTargetEnd = new Date(
           request.project.targetEndDate.getTime() + request.timeImpactDays * 86_400_000
         );
@@ -101,7 +104,6 @@ export async function decideScopeChangeAction(raw: unknown): Promise<ActionResul
           data: { targetEndDate: newTargetEnd, syncVersion: { increment: 1 } },
         });
 
-        // Apply budget impact to CapEx baseline (scope deltas are capital by policy).
         if (request.project.financials) {
           const impact = new Prisma.Decimal(request.budgetImpactUSD);
           const newCapex = request.project.financials.capexBudgetUSD.add(impact);
@@ -140,9 +142,31 @@ export async function decideScopeChangeAction(raw: unknown): Promise<ActionResul
         },
         tx
       );
+      return { projectId: request.projectId, timeImpactDays: request.timeImpactDays };
     });
 
-    revalidatePath(`/projects/${request.projectId}`);
+    if (outcome.error !== undefined) return { ok: false, error: outcome.error };
+
+    // Dependency cascade: an approved schedule shift ripples to downstream
+    // projects — their RAG is refreshed and the dependency rail surfaces the
+    // impact. Dates of downstream projects are NOT auto-shifted: gate
+    // governance requires each successor to accept its own re-baseline.
+    if (input.approve && outcome.timeImpactDays !== 0) {
+      const edges = await withSystemDb((db) =>
+        db.projectDependency.findMany({
+          select: { predecessorProjectId: true, successorProjectId: true },
+        })
+      );
+      const affected = downstreamOf(
+        edges.map((e) => ({ from: e.predecessorProjectId, to: e.successorProjectId })),
+        outcome.projectId
+      );
+      if (affected.length > 0) {
+        await recalculateRag(affected);
+      }
+    }
+
+    revalidatePath(`/projects/${outcome.projectId}`);
     revalidatePath("/meeting");
     return { ok: true, data: undefined };
   } catch (err) {

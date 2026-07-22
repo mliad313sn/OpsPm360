@@ -4,7 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { advanceGateAction } from "@/server/actions/projects";
 import { resolveBlockerAction } from "@/server/actions/blockers";
+import {
+  createRiskAction,
+  realizeRiskAsBlockerAction,
+  updateRiskStatusAction,
+} from "@/server/actions/risks";
 import { GATE_EXIT_CHECKLISTS, isGate, nextGate, type Gate } from "@/lib/gates";
+import { riskBand, riskScore } from "@/lib/risk";
 import {
   createScopeChangeAction,
   decideScopeChangeAction,
@@ -105,9 +111,34 @@ interface ScopeChangeRow {
   requestedByName: string;
 }
 
+interface RiskRow {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  probability: number;
+  impact: number;
+  potentialLossUSD: number;
+  mitigation: string | null;
+  status: string;
+  raisedByName: string;
+}
+
+const RISK_CATEGORIES = [
+  "TECHNICAL",
+  "FINANCIAL",
+  "SAFETY",
+  "SUPPLY_CHAIN",
+  "ENVIRONMENTAL",
+  "REGULATORY",
+] as const;
+
 export function ProjectActions({
   projectId,
   currentGate,
+  totalBudgetUSD,
+  totalActualUSD,
+  risks,
   blockers,
   scopeChanges,
   canSteer,
@@ -115,6 +146,9 @@ export function ProjectActions({
 }: {
   projectId: string;
   currentGate: string;
+  totalBudgetUSD: number;
+  totalActualUSD: number;
+  risks: RiskRow[];
   blockers: BlockerRow[];
   scopeChanges: ScopeChangeRow[];
   canSteer: boolean;
@@ -314,6 +348,35 @@ export function ProjectActions({
                   />
                 </label>
               </div>
+              {(() => {
+                // What-if simulation: projected post-approval variance vs the
+                // RAG thresholds (>10% caps AMBER, >20% forces RED).
+                const delta = Number(scBudget) || 0;
+                const newBudget = totalBudgetUSD + delta;
+                if (delta === 0 || newBudget <= 0) return null;
+                const projectedPct = ((totalActualUSD - newBudget) / newBudget) * 100;
+                const tone =
+                  projectedPct > 20
+                    ? "text-rag-red"
+                    : projectedPct > 10
+                      ? "text-rag-amber"
+                      : "text-rag-green";
+                return (
+                  <p className={`tabular text-xs ${tone}`} aria-live="polite">
+                    What-if after approval: budget {formatMoneyCompact(newBudget)}, spend variance{" "}
+                    {projectedPct >= 0 ? "+" : ""}
+                    {projectedPct.toFixed(1)}%
+                    {projectedPct > 20
+                      ? " → would force RED"
+                      : projectedPct > 10
+                        ? " → would cap at AMBER"
+                        : " → within thresholds"}
+                    {(Number(scDays) || 0) !== 0
+                      ? ` · target end shifts ${Number(scDays) > 0 ? "+" : ""}${Math.trunc(Number(scDays))}d`
+                      : ""}
+                  </p>
+                );
+              })()}
               <Button
                 size="sm"
                 disabled={pending || scDescription.trim().length < 10}
@@ -338,12 +401,251 @@ export function ProjectActions({
           ) : null}
 
           {feedback ? (
-            <p role="status" className="text-xs text-muted-foreground">
+            <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
               {feedback}
             </p>
           ) : null}
         </CardContent>
       </Card>
+
+      <RiskPanel
+        projectId={projectId}
+        risks={risks}
+        canWrite={canWrite}
+        pending={pending}
+        startTransition={startTransition}
+        afterAction={afterAction}
+      />
     </div>
+  );
+}
+
+function RiskPanel({
+  projectId,
+  risks,
+  canWrite,
+  pending,
+  startTransition,
+  afterAction,
+}: {
+  projectId: string;
+  risks: RiskRow[];
+  canWrite: boolean;
+  pending: boolean;
+  startTransition: React.TransitionStartFunction;
+  afterAction: (result: { ok: boolean; error?: string }, msg: string) => void;
+}): JSX.Element {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<string>("TECHNICAL");
+  const [probability, setProbability] = useState(3);
+  const [impact, setImpact] = useState(3);
+  const [potentialLoss, setPotentialLoss] = useState("0");
+  const [mitigation, setMitigation] = useState("");
+
+  const bandVariant = (band: string) =>
+    band === "CRITICAL" ? "red" : band === "HIGH" ? "amber" : band === "MEDIUM" ? "indigo" : "default";
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle>Risk register (probability × impact)</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Risks MIGHT happen; blockers ARE happening. A realized risk converts to a blocker and
+          starts the SLA escalation clock.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {risks.map((r) => {
+          const score = riskScore(r.probability, r.impact);
+          const band = riskBand(score);
+          return (
+            <div key={r.id} className="rounded border border-border/50 p-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={bandVariant(band)} dot>
+                  {band} · P{r.probability}×I{r.impact}={score}
+                </Badge>
+                <Badge variant="outline">{r.category.replaceAll("_", " ")}</Badge>
+                {r.potentialLossUSD > 0 ? (
+                  <span className="tabular meta text-xs text-muted-foreground">
+                    exposure {formatMoneyCompact(r.potentialLossUSD)}
+                  </span>
+                ) : null}
+                <span className="font-medium">{r.title}</span>
+                <Badge
+                  variant={
+                    r.status === "REALIZED" ? "red" : r.status === "CLOSED" ? "green" : "outline"
+                  }
+                >
+                  {r.status}
+                </Badge>
+                <span className="ml-auto text-xs text-muted-foreground">by {r.raisedByName}</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{r.description}</p>
+              {r.mitigation ? (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  <span className="meta">Mitigation:</span> {r.mitigation}
+                </p>
+              ) : null}
+              {canWrite && (r.status === "OPEN" || r.status === "MITIGATING") ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {r.status === "OPEN" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() =>
+                        startTransition(async () => {
+                          const result = await updateRiskStatusAction({
+                            riskId: r.id,
+                            status: "MITIGATING",
+                          });
+                          afterAction(result, "Risk marked as mitigating.");
+                        })
+                      }
+                    >
+                      Start mitigation
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        const result = await updateRiskStatusAction({
+                          riskId: r.id,
+                          status: "CLOSED",
+                        });
+                        afterAction(result, "Risk closed.");
+                      })
+                    }
+                  >
+                    Close (no longer a threat)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        const result = await realizeRiskAsBlockerAction(r.id);
+                        afterAction(result, "Risk realized — blocker created, SLA clock started.");
+                      })
+                    }
+                  >
+                    Realized → create blocker
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {risks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No risks logged.</p>
+        ) : null}
+
+        {canWrite ? (
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs font-medium text-muted-foreground">Log a risk</p>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Risk title"
+              aria-label="Risk title"
+            />
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What might happen, and what would it affect…"
+              aria-label="Risk description"
+            />
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs text-muted-foreground">
+                Category
+                <select
+                  className="mt-1 block h-9 rounded-md border border-input bg-card px-2 text-sm"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                >
+                  {RISK_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c.replaceAll("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs text-muted-foreground">
+                Exposure (USD)
+                <Input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  value={potentialLoss}
+                  onChange={(e) => setPotentialLoss(e.target.value)}
+                  className="w-28"
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                Probability (1–5)
+                <Input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={String(probability)}
+                  onChange={(e) => setProbability(Number(e.target.value) || 1)}
+                  className="w-24"
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                Impact (1–5)
+                <Input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={String(impact)}
+                  onChange={(e) => setImpact(Number(e.target.value) || 1)}
+                  className="w-24"
+                />
+              </label>
+              <Badge variant={bandVariant(riskBand(riskScore(probability, impact)))} dot>
+                Score {riskScore(probability, impact)} —{" "}
+                {riskBand(riskScore(probability, impact))}
+              </Badge>
+            </div>
+            <Textarea
+              value={mitigation}
+              onChange={(e) => setMitigation(e.target.value)}
+              placeholder="Mitigation plan (optional)…"
+              aria-label="Mitigation plan"
+            />
+            <Button
+              size="sm"
+              disabled={pending || title.trim().length < 3 || description.trim().length < 1}
+              onClick={() =>
+                startTransition(async () => {
+                  const result = await createRiskAction({
+                    projectId,
+                    title: title.trim(),
+                    description: description.trim(),
+                    category,
+                    probability: Math.min(5, Math.max(1, Math.trunc(probability))),
+                    impact: Math.min(5, Math.max(1, Math.trunc(impact))),
+                    potentialLossUSD: Math.max(0, Number(potentialLoss) || 0),
+                    mitigation: mitigation.trim() || undefined,
+                  });
+                  afterAction(result, "Risk logged.");
+                  setTitle("");
+                  setDescription("");
+                  setMitigation("");
+                })
+              }
+            >
+              Log risk
+            </Button>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

@@ -203,8 +203,44 @@ export async function flushOutbox(): Promise<SyncSummary> {
   }
 }
 
-/** Discard a conflicted/rejected op after the user has reviewed it. */
+/** Discard a conflicted/rejected op after the user has reviewed it ("Keep Theirs"). */
 export async function discardOutboxItem(clientOpId: string): Promise<void> {
   const db = getOfflineDb();
   await db.outbox.delete(clientOpId);
+}
+
+/**
+ * "Keep Mine": re-apply the local edit on top of the server's current version.
+ *
+ * The op is re-issued with a FRESH clientOpId (the original id is burned in
+ * the server's idempotency log as a recorded conflict) and its
+ * expectedSyncVersion rebased to the server's authoritative version. If the
+ * server has moved again in the meantime, this simply produces a new explicit
+ * conflict — user intent is never silently overwritten in either direction.
+ */
+export async function resolveConflictKeepMine(clientOpId: string): Promise<void> {
+  const db = getOfflineDb();
+  const op = await db.outbox.get(clientOpId);
+  if (!op || op.status !== "conflict") return;
+
+  const server = op.serverState as { syncVersion?: number } | null;
+  let payload = op.payload;
+  if (op.kind === "project.update" && server && typeof server.syncVersion === "number") {
+    const previous = op.payload as { projectId: string; expectedSyncVersion: number; patch: unknown };
+    payload = { ...previous, expectedSyncVersion: server.syncVersion };
+  }
+
+  await db.transaction("rw", db.outbox, async () => {
+    await db.outbox.delete(clientOpId);
+    await db.outbox.add({
+      clientOpId: newClientOpId(),
+      kind: op.kind,
+      payload,
+      occurredAt: new Date().toISOString(),
+      status: "pending",
+      attempts: 0,
+      lastError: null,
+      serverState: null,
+    });
+  });
 }

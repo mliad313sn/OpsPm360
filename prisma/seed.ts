@@ -110,14 +110,19 @@ async function main(): Promise<void> {
   }
 
   // ── Sample portfolio ───────────────────────────────────────────────────────
-  const existing = await prisma.project.count();
-  if (existing > 0) {
-    console.log("Projects already seeded; skipping portfolio seed.");
-    return;
-  }
+  // RLS: project-tree tables are policy-protected; the seed runs with the
+  // system context inside a single transaction.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.scope', 'system', true), set_config('app.site_id', '', true)`;
+
+    const existing = await tx.project.count();
+    if (existing > 0) {
+      console.log("Projects already seeded; skipping portfolio seed.");
+      return;
+    }
 
   // 1. Group project, healthy (GREEN)
-  await prisma.project.create({
+  await tx.project.create({
     data: {
       code: "GRP-2026-001",
       title: "Group ERP S/4HANA Migration — Wave 2",
@@ -157,7 +162,7 @@ async function main(): Promise<void> {
   });
 
   // 2. Houndé site project with an aged CRITICAL blocker (forces RED)
-  const hndProject = await prisma.project.create({
+  const hndProject = await tx.project.create({
     data: {
       code: "HND-2026-001",
       title: "Houndé Pit-to-Plant LTE Network",
@@ -201,7 +206,7 @@ async function main(): Promise<void> {
     },
   });
 
-  await prisma.blocker.create({
+  await tx.blocker.create({
     data: {
       projectId: hndProject.id,
       raisedById: leads.HND ?? groupManager.id,
@@ -216,7 +221,7 @@ async function main(): Promise<void> {
   });
 
   // 3. Sabodala project over budget (AMBER/RED variance), EUR local
-  await prisma.project.create({
+  await tx.project.create({
     data: {
       code: "SBD-2026-001",
       title: "Sabodala-Massawa Process Control Upgrade",
@@ -264,7 +269,7 @@ async function main(): Promise<void> {
   });
 
   // 4. Ity project, proposed stage (GREEN)
-  await prisma.project.create({
+  await tx.project.create({
     data: {
       code: "ITY-2026-001",
       title: "Ity Camp Wi-Fi 6 Refresh",
@@ -291,6 +296,7 @@ async function main(): Promise<void> {
         ],
       },
     },
+  });
   });
 
   console.log("Seed complete. Login: amara.kone@endeavourmining.com / Endeavour#2026");

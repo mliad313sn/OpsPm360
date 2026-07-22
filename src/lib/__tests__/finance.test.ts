@@ -1,12 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
   computeEva,
+  computeForecast,
   computeVariance,
   formatMoneyCompact,
   localToUsd,
   sumUSD,
   usdToLocal,
 } from "@/lib/finance";
+
+describe("computeForecast (EAC/ETC)", () => {
+  it("projects overrun from CPI trend", () => {
+    // BAC 100k, EV 40k, AC 50k → CPI 0.8 → EAC = 50k + 60k/0.8 = 125k
+    const f = computeForecast({
+      budgetAtCompletionUSD: 100_000,
+      earnedValueUSD: 40_000,
+      actualCostUSD: 50_000,
+    });
+    expect(f.basis).toBe("cpi");
+    expect(f.eacUSD).toBe(125_000);
+    expect(f.etcUSD).toBe(75_000);
+    expect(f.vacUSD).toBe(-25_000);
+  });
+
+  it("falls back to baseline with no cost signal", () => {
+    const f = computeForecast({
+      budgetAtCompletionUSD: 100_000,
+      earnedValueUSD: 0,
+      actualCostUSD: 0,
+    });
+    expect(f.basis).toBe("baseline");
+    expect(f.eacUSD).toBe(100_000);
+    expect(f.vacUSD).toBe(0);
+  });
+
+  it("handles garbage inputs without NaN", () => {
+    const f = computeForecast({
+      budgetAtCompletionUSD: NaN,
+      earnedValueUSD: -5,
+      actualCostUSD: Infinity,
+    });
+    expect(Number.isFinite(f.eacUSD)).toBe(true);
+    expect(f.basis).toBe("baseline");
+  });
+});
 
 describe("computeVariance", () => {
   const base = {

@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/audit";
 import { runSlaSweep } from "@/lib/sla";
 import { notifyEscalation } from "@/lib/notify";
 import { recalculateRag } from "@/server/rag-service";
+import { withSystemDb } from "@/server/db";
 
 export const dynamic = "force-dynamic";
 
@@ -33,18 +33,20 @@ async function runSweepRequest(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const openBlockers = await prisma.blocker.findMany({
-    where: { status: { not: "RESOLVED" } },
-    select: {
-      id: true,
-      status: true,
-      escalationLevel: true,
-      createdAt: true,
-      projectId: true,
-      title: true,
-      project: { select: { code: true } },
-    },
-  });
+  const openBlockers = await withSystemDb((db) =>
+    db.blocker.findMany({
+      where: { status: { not: "RESOLVED" } },
+      select: {
+        id: true,
+        status: true,
+        escalationLevel: true,
+        createdAt: true,
+        projectId: true,
+        title: true,
+        project: { select: { code: true } },
+      },
+    })
+  );
 
   const decisions = runSlaSweep(openBlockers);
   const affectedProjects = new Set<string>();
@@ -53,7 +55,7 @@ async function runSweepRequest(req: NextRequest): Promise<NextResponse> {
     const blocker = openBlockers.find((b) => b.id === decision.blockerId);
     if (!blocker) continue;
 
-    await prisma.$transaction(async (tx) => {
+    await withSystemDb(async (tx) => {
       await tx.blocker.update({
         where: { id: decision.blockerId },
         data: {

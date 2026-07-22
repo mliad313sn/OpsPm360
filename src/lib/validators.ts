@@ -148,6 +148,49 @@ export const resolveBlockerSchema = z.object({
 });
 export type ResolveBlockerInput = z.infer<typeof resolveBlockerSchema>;
 
+export const riskCategorySchema = z.enum([
+  "FINANCIAL",
+  "TECHNICAL",
+  "SAFETY",
+  "SUPPLY_CHAIN",
+  "ENVIRONMENTAL",
+  "REGULATORY",
+]);
+
+export const createRiskSchema = z.object({
+  projectId: z.string().cuid(),
+  title: z.string().trim().min(3).max(200),
+  description: z.string().trim().min(1).max(5000),
+  category: riskCategorySchema.default("TECHNICAL"),
+  probability: z.number().int().min(1).max(5),
+  impact: z.number().int().min(1).max(5),
+  potentialLossUSD: z.number().finite().min(0).max(1_000_000_000).default(0),
+  mitigation: z.string().trim().max(5000).optional(),
+  contingencyPlan: z.string().trim().max(5000).optional(),
+});
+export type CreateRiskInput = z.infer<typeof createRiskSchema>;
+
+export const createDependencySchema = z
+  .object({
+    predecessorProjectId: z.string().cuid(),
+    successorProjectId: z.string().cuid(),
+    dependencyType: z
+      .enum(["FINISH_TO_START", "START_TO_START", "FINISH_TO_FINISH", "START_TO_FINISH"])
+      .default("FINISH_TO_START"),
+    lagDays: z.number().int().min(-365).max(365).default(0),
+  })
+  .refine((v) => v.predecessorProjectId !== v.successorProjectId, {
+    message: "A project cannot depend on itself",
+  });
+export type CreateDependencyInput = z.infer<typeof createDependencySchema>;
+
+export const updateRiskSchema = z.object({
+  riskId: z.string().cuid(),
+  status: z.enum(["OPEN", "MITIGATING", "REALIZED", "CLOSED"]),
+  mitigation: z.string().trim().max(5000).optional(),
+});
+export type UpdateRiskInput = z.infer<typeof updateRiskSchema>;
+
 export const createScopeChangeSchema = z.object({
   projectId: z.string().cuid(),
   scopeDeltaDescription: z.string().trim().min(10).max(5000),

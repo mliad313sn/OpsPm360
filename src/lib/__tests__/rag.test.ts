@@ -5,6 +5,7 @@ import {
   computeRag,
   computeScheduleHealth,
   effectiveRag,
+  portfolioHealth,
 } from "@/lib/rag";
 
 const NOW = new Date("2026-07-01T00:00:00Z");
@@ -221,6 +222,134 @@ describe("computeRag — composite & hard rules", () => {
     );
     expect(r.score).toBeCloseTo(60, 5);
     expect(r.rag).toBe("AMBER");
+  });
+});
+
+describe("EVA-integrated hard rules", () => {
+  const healthy = {
+    milestones: [
+      {
+        targetDate: daysAhead(30),
+        actualDate: null,
+        status: "PENDING" as const,
+        weightPercent: 100,
+      },
+    ],
+    blockers: [],
+    financials: { totalBudgetUSD: 100_000, totalActualUSD: 40_000 },
+  };
+
+  it("caps at AMBER when CPI < 0.85", () => {
+    const r = computeRag({ ...healthy, eva: { cpi: 0.8, spi: 1.1 } }, NOW);
+    expect(r.rag).toBe("AMBER");
+    expect(r.reasons.join(" ")).toContain("CPI");
+  });
+
+  it("caps at AMBER when SPI < 0.85", () => {
+    const r = computeRag({ ...healthy, eva: { cpi: 1.0, spi: 0.7 } }, NOW);
+    expect(r.rag).toBe("AMBER");
+    expect(r.reasons.join(" ")).toContain("SPI");
+  });
+
+  it("stays GREEN with healthy indices, and ignores null indices", () => {
+    expect(computeRag({ ...healthy, eva: { cpi: 1.05, spi: 0.95 } }, NOW).rag).toBe("GREEN");
+    expect(computeRag({ ...healthy, eva: { cpi: null, spi: null } }, NOW).rag).toBe("GREEN");
+  });
+});
+
+describe("risk register hard rules", () => {
+  const healthy = {
+    milestones: [
+      {
+        targetDate: daysAhead(30),
+        actualDate: null,
+        status: "PENDING" as const,
+        weightPercent: 100,
+      },
+    ],
+    blockers: [],
+    financials: { totalBudgetUSD: 100_000, totalActualUSD: 40_000 },
+  };
+
+  it("forces RED with >=2 unmitigated high risks", () => {
+    const r = computeRag(
+      {
+        ...healthy,
+        risks: [
+          { score: 16, status: "OPEN", hasMitigation: false, potentialLossUSD: 0 },
+          { score: 20, status: "OPEN", hasMitigation: false, potentialLossUSD: 0 },
+        ],
+      },
+      NOW
+    );
+    expect(r.rag).toBe("RED");
+    expect(r.reasons.join(" ")).toContain("unmitigated high risks");
+  });
+
+  it("does not force RED when high risks have mitigation plans", () => {
+    const r = computeRag(
+      {
+        ...healthy,
+        risks: [
+          { score: 16, status: "OPEN", hasMitigation: true, potentialLossUSD: 0 },
+          { score: 20, status: "MITIGATING", hasMitigation: true, potentialLossUSD: 0 },
+        ],
+      },
+      NOW
+    );
+    expect(r.rag).toBe("GREEN");
+  });
+
+  it("caps at AMBER when active exposure exceeds 25% of budget", () => {
+    const r = computeRag(
+      {
+        ...healthy,
+        risks: [{ score: 6, status: "OPEN", hasMitigation: true, potentialLossUSD: 30_000 }],
+      },
+      NOW
+    );
+    expect(r.rag).toBe("AMBER");
+    expect(r.reasons.join(" ")).toContain("exposure");
+  });
+
+  it("ignores closed/realized risks for exposure", () => {
+    const r = computeRag(
+      {
+        ...healthy,
+        risks: [
+          { score: 25, status: "CLOSED", hasMitigation: false, potentialLossUSD: 90_000 },
+          { score: 25, status: "REALIZED", hasMitigation: false, potentialLossUSD: 90_000 },
+        ],
+      },
+      NOW
+    );
+    expect(r.rag).toBe("GREEN");
+  });
+});
+
+describe("portfolioHealth rollup", () => {
+  it("weights by budget", () => {
+    const h = portfolioHealth([
+      { rag: "RED", budgetUSD: 9_000_000 },
+      { rag: "GREEN", budgetUSD: 1_000_000 },
+    ]);
+    // 0.9*30 + 0.1*95 = 36.5 → RED band
+    expect(h.score).toBeCloseTo(36.5, 1);
+    expect(h.rag).toBe("RED");
+    expect(h.weightedByBudget).toBe(true);
+  });
+
+  it("falls back to equal weighting when budgets are zero", () => {
+    const h = portfolioHealth([
+      { rag: "RED", budgetUSD: 0 },
+      { rag: "GREEN", budgetUSD: 0 },
+    ]);
+    expect(h.score).toBeCloseTo(62.5, 1);
+    expect(h.weightedByBudget).toBe(false);
+  });
+
+  it("empty portfolio is healthy", () => {
+    expect(portfolioHealth([]).rag).toBe("GREEN");
   });
 });
 

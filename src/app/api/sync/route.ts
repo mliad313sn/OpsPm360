@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { assertProjectWrite, projectReadScope, ForbiddenError } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { recalculateRag } from "@/server/rag-service";
+import { withUserDb } from "@/server/db";
 import {
   syncBatchSchema,
   type SyncOperation,
@@ -15,19 +16,25 @@ import type { SessionUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 /**
- * Offline delta-sync endpoint (Gate 2).
+ * Offline delta-sync endpoint.
  *
  * Clients queue mutations in IndexedDB while offline and POST them here in
  * order on reconnect. Guarantees:
  *  - Idempotency: each op carries a client-generated UUID; replays are skipped.
- *  - Tenant isolation: every op re-runs the same RBAC guards as online writes.
- *  - Conflict policy (SRS Module 4): syncVersion optimistic concurrency with
- *    Last-Write-Wins on server timestamps. If the offline edit occurred after
- *    the server's last change, it is applied (and flagged in SyncMutationLog);
- *    otherwise the server state stands and the client receives it to rebase.
+ *  - Tenant isolation: RLS transaction context + the same RBAC guards as
+ *    online writes, per operation.
+ *  - Conflict policy: EXPLICIT resolution. A version clash is never silently
+ *    overwritten (no last-write-wins) — the server returns its authoritative
+ *    state and the user resolves Keep Mine / Keep Theirs in the Sync Tray.
  */
 
+function asJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
 async function applyOperation(user: SessionUser, op: SyncOperation): Promise<SyncOpResult> {
+  // SyncMutationLog is deliberately outside RLS: it is keyed by clientOpId
+  // and never queried cross-tenant.
   const duplicate = await prisma.syncMutationLog.findUnique({
     where: { clientOpId: op.clientOpId },
   });
@@ -39,87 +46,47 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
     switch (op.kind) {
       case "project.update": {
         const { projectId, expectedSyncVersion, patch } = op.data;
-        const project = await prisma.project.findFirst({
-          where: { id: projectId, ...projectReadScope(user) },
-        });
-        if (!project) {
-          return { clientOpId: op.clientOpId, status: "rejected", message: "Project not found" };
-        }
-        assertProjectWrite(user, project);
+        return await withUserDb(user, async (tx): Promise<SyncOpResult> => {
+          const project = await tx.project.findFirst({
+            where: { id: projectId, ...projectReadScope(user) },
+          });
+          if (!project) {
+            return { clientOpId: op.clientOpId, status: "rejected", message: "Project not found" };
+          }
+          assertProjectWrite(user, project);
 
-        if (project.syncVersion !== expectedSyncVersion) {
-          // SRS Module 4: Last-Write-Wins with server timestamps. If the offline
-          // edit happened AFTER the server's last change, the offline edit wins
-          // (its clock is sanity-capped at "now" to block future-dated clients).
-          const opTime = Math.min(op.occurredAt.getTime(), Date.now());
-          if (opTime > project.updatedAt.getTime()) {
-            await prisma.$transaction(async (tx) => {
-              await tx.project.update({
-                where: { id: project.id },
-                data: { ...patch, syncVersion: { increment: 1 } },
-              });
-              await tx.syncMutationLog.create({
-                data: {
-                  clientOpId: op.clientOpId,
-                  userId: user.id,
-                  entityType: "Project",
-                  entityId: project.id,
-                  operation: "update",
-                  payload: JSON.parse(JSON.stringify(op.data)) as Prisma.InputJsonValue,
-                  conflict: true,
-                  conflictNote: `LWW: offline edit (${op.occurredAt.toISOString()}) newer than server state (${project.updatedAt.toISOString()}) — applied`,
-                },
-              });
-              await writeAudit(
-                {
-                  userId: user.id,
-                  action: "SYNC",
-                  entityType: "Project",
-                  entityId: project.id,
-                  previous: { status: project.status, currentGate: project.currentGate },
-                  next: { ...patch, _conflictResolution: "last-write-wins" },
-                },
-                tx
-              );
+          if (project.syncVersion !== expectedSyncVersion) {
+            // Explicit conflict: record it and hand back authoritative state.
+            await tx.syncMutationLog.create({
+              data: {
+                clientOpId: op.clientOpId,
+                userId: user.id,
+                entityType: "Project",
+                entityId: projectId,
+                operation: "update",
+                payload: asJson(op.data),
+                conflict: true,
+                conflictNote: `client expected v${expectedSyncVersion}, server at v${project.syncVersion} — awaiting explicit resolution`,
+              },
             });
             return {
               clientOpId: op.clientOpId,
-              status: "applied",
-              message: "Version conflict resolved via last-write-wins (offline edit was newer).",
+              status: "conflict",
+              message:
+                "This project changed on the server while you were offline. Review and choose Keep Mine or Keep Theirs.",
+              serverState: {
+                projectId: project.id,
+                syncVersion: project.syncVersion,
+                title: project.title,
+                description: project.description,
+                status: project.status,
+                currentGate: project.currentGate,
+                startDate: project.startDate,
+                targetEndDate: project.targetEndDate,
+              },
             };
           }
 
-          // Server state is newer: hand the client the authoritative state to rebase against.
-          await prisma.syncMutationLog.create({
-            data: {
-              clientOpId: op.clientOpId,
-              userId: user.id,
-              entityType: "Project",
-              entityId: projectId,
-              operation: "update",
-              payload: JSON.parse(JSON.stringify(op.data)),
-              conflict: true,
-              conflictNote: `client expected v${expectedSyncVersion}, server at v${project.syncVersion}`,
-            },
-          });
-          return {
-            clientOpId: op.clientOpId,
-            status: "conflict",
-            message: "Server version is newer; local change was not applied.",
-            serverState: {
-              projectId: project.id,
-              syncVersion: project.syncVersion,
-              title: project.title,
-              description: project.description,
-              status: project.status,
-              currentGate: project.currentGate,
-              startDate: project.startDate,
-              targetEndDate: project.targetEndDate,
-            },
-          };
-        }
-
-        await prisma.$transaction(async (tx) => {
           await tx.project.update({
             where: { id: project.id },
             data: { ...patch, syncVersion: { increment: 1 } },
@@ -131,7 +98,7 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
               entityType: "Project",
               entityId: project.id,
               operation: "update",
-              payload: JSON.parse(JSON.stringify(op.data)),
+              payload: asJson(op.data),
             },
           });
           await writeAudit(
@@ -145,31 +112,31 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
             },
             tx
           );
+          return { clientOpId: op.clientOpId, status: "applied" };
         });
-        return { clientOpId: op.clientOpId, status: "applied" };
       }
 
       case "blocker.create": {
         const { projectId, title, description, severity, targetResolutionDate } = op.data;
-        const project = await prisma.project.findFirst({
-          where: { id: projectId, ...projectReadScope(user) },
-        });
-        if (!project) {
-          return { clientOpId: op.clientOpId, status: "rejected", message: "Project not found" };
-        }
-        assertProjectWrite(user, project);
 
         // Preserve the offline timestamp so SLA clocks start when the blocker
-        // was actually raised — but clamp to [now - 7d, now] so a skewed or
-        // malicious client clock cannot trigger instant CIO escalation or
-        // future-date the record.
+        // was actually raised — clamped to [now - 7d, now] so a skewed or
+        // malicious client clock cannot trigger instant CIO escalation.
         const now = Date.now();
         const MAX_BACKDATE_MS = 7 * 86_400_000;
         const clampedCreatedAt = new Date(
           Math.min(now, Math.max(now - MAX_BACKDATE_MS, op.occurredAt.getTime()))
         );
 
-        await prisma.$transaction(async (tx) => {
+        const result = await withUserDb(user, async (tx): Promise<SyncOpResult> => {
+          const project = await tx.project.findFirst({
+            where: { id: projectId, ...projectReadScope(user) },
+          });
+          if (!project) {
+            return { clientOpId: op.clientOpId, status: "rejected", message: "Project not found" };
+          }
+          assertProjectWrite(user, project);
+
           const blocker = await tx.blocker.create({
             data: {
               projectId,
@@ -188,7 +155,7 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
               entityType: "Blocker",
               entityId: blocker.id,
               operation: "create",
-              payload: JSON.parse(JSON.stringify(op.data)),
+              payload: asJson(op.data),
             },
           });
           await writeAudit(
@@ -201,26 +168,28 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
             },
             tx
           );
+          return { clientOpId: op.clientOpId, status: "applied" };
         });
-        await recalculateRag([projectId]);
-        return { clientOpId: op.clientOpId, status: "applied" };
+
+        if (result.status === "applied") await recalculateRag([projectId]);
+        return result;
       }
 
       case "blocker.resolve": {
         const { blockerId, resolutionNotes } = op.data;
-        const blocker = await prisma.blocker.findFirst({
-          where: { id: blockerId, project: projectReadScope(user) },
-          include: { project: true },
-        });
-        if (!blocker) {
-          return { clientOpId: op.clientOpId, status: "rejected", message: "Blocker not found" };
-        }
-        assertProjectWrite(user, blocker.project);
-        if (blocker.status === "RESOLVED") {
-          return { clientOpId: op.clientOpId, status: "duplicate", message: "Already resolved" };
-        }
+        const result = await withUserDb(user, async (tx): Promise<SyncOpResult & { projectId?: string }> => {
+          const blocker = await tx.blocker.findFirst({
+            where: { id: blockerId, project: projectReadScope(user) },
+            include: { project: true },
+          });
+          if (!blocker) {
+            return { clientOpId: op.clientOpId, status: "rejected", message: "Blocker not found" };
+          }
+          assertProjectWrite(user, blocker.project);
+          if (blocker.status === "RESOLVED") {
+            return { clientOpId: op.clientOpId, status: "duplicate", message: "Already resolved" };
+          }
 
-        await prisma.$transaction(async (tx) => {
           await tx.blocker.update({
             where: { id: blocker.id },
             data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNotes },
@@ -232,7 +201,7 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
               entityType: "Blocker",
               entityId: blocker.id,
               operation: "update",
-              payload: JSON.parse(JSON.stringify(op.data)),
+              payload: asJson(op.data),
             },
           });
           await writeAudit(
@@ -246,9 +215,13 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
             },
             tx
           );
+          return { clientOpId: op.clientOpId, status: "applied", projectId: blocker.projectId };
         });
-        await recalculateRag([blocker.projectId]);
-        return { clientOpId: op.clientOpId, status: "applied" };
+
+        if (result.status === "applied" && result.projectId) {
+          await recalculateRag([result.projectId]);
+        }
+        return { clientOpId: result.clientOpId, status: result.status, message: result.message };
       }
     }
   } catch (err) {

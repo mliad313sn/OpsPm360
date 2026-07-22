@@ -127,6 +127,40 @@ GROUP projects don't need a fake site row, blocker `escalationLevel` enum + `Syn
 for idempotent replay, scoped `ApprovalStatus` on scope changes instead of a lone boolean,
 and scrypt password hashes on `User`.
 
+## Tier-1 Enterprise upgrade pass
+
+Implemented in response to the enterprise deep-assessment (P0/P1 items):
+
+- **Postgres Row-Level Security**: FORCE-enabled policies on the whole project tree
+  (Project + financials, milestones, blockers, risks, scope changes, decisions,
+  dependency edges). Every query runs through `withUserDb`/`withSystemDb`, which set
+  transaction-local context GUCs; a query that skips the wrapper sees zero rows —
+  tenant leaks fail closed. App-level scope fragments remain as a second layer.
+- **Identity**: 15-minute access JWTs with a 7-day sliding refresh window (silent
+  rotation in edge middleware); **OIDC SSO** (Entra ID/Okta/Keycloak) with PKCE,
+  discovery, JWKS validation, and no JIT provisioning — IdP authenticates,
+  OpsPM360 authorizes. Enabled via `OIDC_*` env vars.
+- **Explicit sync conflict resolution**: last-write-wins removed. Version clashes
+  surface in the Sync Tray with a local-vs-server field diff and Keep Mine
+  (rebase + re-send under a fresh idempotency key) / Keep Theirs choices.
+  Per-field manual merge: roadmap.
+- **Risk register** (PMBOK): categorized risks with probability × impact scoring,
+  financial exposure (USD), mitigation/contingency plans, and one-click
+  materialization into an SLA-tracked blocker (linked both ways).
+- **Cross-project dependencies**: FS/SS/FF/SF edges with lag, cross-site flagging,
+  full-graph cycle rejection (DFS, inside the write transaction), a dependency
+  impact rail in the War Room, and RAG cascade to downstream projects on approved
+  schedule shifts (dates are never auto-shifted — successors re-baseline explicitly).
+- **RAG engine upgrades**: CPI/SPI < 0.85 caps at AMBER; ≥2 unmitigated high risks
+  force RED; active risk exposure >25% of budget caps at AMBER; budget-weighted
+  **Portfolio Health** indicator on the dashboard.
+- **Financial forecasting**: CPI-trend EAC / ETC / VAC on every project ledger.
+- **Compliance operations**: `/api/audit-retention` archives audit rows older than
+  `AUDIT_RETENTION_DAYS` as NDJSON to `ARCHIVE_WEBHOOK_URL` and purges only after
+  successful archive; War-Room decisions dispatch to the notification webhook.
+- **Accessibility**: skip-link, landmarks, aria-live feedback, `:focus-visible`,
+  `prefers-reduced-motion`, and a high-contrast mode for bright field conditions.
+
 ## Gap Audit & Self-Correction Log
 
 Defects caught and corrected by the autonomous audit loop before delivery:

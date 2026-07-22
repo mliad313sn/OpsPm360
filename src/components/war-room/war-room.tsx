@@ -11,7 +11,7 @@ import {
   ShieldAlert,
   Timer,
 } from "lucide-react";
-import type { PortfolioRow } from "@/server/queries";
+import type { PortfolioRow, WarRoomSignals } from "@/server/queries";
 import { overrideRagAction } from "@/server/actions/projects";
 import { createBlockerAction } from "@/server/actions/blockers";
 import {
@@ -67,10 +67,12 @@ export function WarRoom({
   rows,
   canSteer,
   session,
+  signals,
 }: {
   rows: PortfolioRow[];
   canSteer: boolean;
   session: MeetingSession | null;
+  signals: WarRoomSignals;
 }): JSX.Element {
   const [atRiskOnly, setAtRiskOnly] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -192,6 +194,66 @@ export function WarRoom({
                 <p className="py-6 text-center text-sm text-muted-foreground">
                   Nothing at risk — the portfolio is green. 🎉
                 </p>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          {/* Top risk heatmap */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display text-sm">Top Risk Heatmap (P×I)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {signals.topRisks.map((r) => (
+                <div key={r.id} className="flex items-center gap-2 text-xs">
+                  <Badge
+                    variant={r.score >= 15 ? "red" : r.score >= 8 ? "amber" : "default"}
+                    dot
+                  >
+                    P{r.probability}×I{r.impact}={r.score}
+                  </Badge>
+                  <span className="meta text-muted-foreground">{r.projectCode}</span>
+                  <span className="truncate">{r.title}</span>
+                  {!r.hasMitigation && r.score >= 15 ? (
+                    <Badge variant="red">no mitigation</Badge>
+                  ) : null}
+                </div>
+              ))}
+              {signals.topRisks.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No open risks logged.</p>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          {/* Cross-site dependency impact rail */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display text-sm">Dependency Impact Rail</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {signals.dependencyAlerts.map((d) => (
+                <div key={d.id} className="rounded border border-border/50 p-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="meta">{d.successorCode}</span>
+                    <span className="text-muted-foreground">blocked by</span>
+                    {d.predecessorCode ? (
+                      <>
+                        <span className="meta">{d.predecessorCode}</span>
+                        {d.predecessorRag ? <RagBadge rag={d.predecessorRag} /> : null}
+                      </>
+                    ) : (
+                      <Badge variant="outline">restricted upstream</Badge>
+                    )}
+                    {d.isCrossSite ? <Badge variant="indigo">cross-site</Badge> : null}
+                  </div>
+                  <p className="meta mt-1 text-[10px] text-muted-foreground">
+                    {d.dependencyType.replaceAll("_", " ")}
+                    {d.lagDays !== 0 ? ` · ${d.lagDays > 0 ? "+" : ""}${d.lagDays}d lag` : ""}
+                  </p>
+                </div>
+              ))}
+              {signals.dependencyAlerts.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No at-risk upstream dependencies.</p>
               ) : null}
             </CardContent>
           </Card>
