@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opspm
+      POSTGRES_PASSWORD: opspm
+      POSTGRES_DB: opspm360
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opspm -d opspm360"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://opspm:opspm@db:5432/opspm360?schema=public
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+    ports:
+      - "3000:3000"
+
+  # SLA sweep every 15 minutes (stand-in for Vercel Cron / K8s CronJob).
+  cron:
+    image: alpine:3.20
+    depends_on:
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env}
+    command: >
+      sh -c "apk add --no-cache curl >/dev/null &&
+             while true; do
+               sleep 900;
+               curl -fsS -X POST -H \"Authorization: Bearer $$CRON_SECRET\" http://app:3000/api/escalations || true;
+             done"
+
+volumes:
+  pgdata:

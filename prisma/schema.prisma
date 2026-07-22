@@ -1,0 +1,351 @@
+// Endeavour Mining Group — IT PPM Platform
+// Multi-tenant (Group IT vs Site IT) project portfolio schema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  GROUP_IT_MANAGER
+  SITE_IT_LEAD
+  EXEC_STAKEHOLDER
+  SYSTEM_ADMIN
+}
+
+enum WanStatus {
+  ONLINE
+  DEGRADED
+  OFFLINE
+}
+
+enum ScopeType {
+  GROUP
+  SITE
+}
+
+enum ProjectStatus {
+  PROPOSED
+  IN_REVIEW
+  APPROVED
+  IN_PROGRESS
+  PAUSED
+  COMPLETED
+}
+
+enum StageGate {
+  INTEL_GATHERING
+  ARCH_REVIEW
+  EXECUTION
+  HANDOVER
+  CLOSED
+}
+
+enum RagStatus {
+  RED
+  AMBER
+  GREEN
+}
+
+enum LocalCurrency {
+  USD
+  EUR
+  XOF
+}
+
+enum MilestoneStatus {
+  PENDING
+  COMPLETED
+  DELAYED
+}
+
+enum BlockerSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum BlockerStatus {
+  OPEN
+  ESCALATED
+  RESOLVED
+}
+
+enum EscalationLevel {
+  SITE_IT_LEAD
+  GROUP_IT_MANAGER
+  GROUP_CIO
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DecisionType {
+  UNBLOCK
+  SCOPE_APPROVED
+  SCOPE_REJECTED
+  RAG_OVERRIDE
+  PAUSE
+  RESUME
+  ESCALATE_TO_CIO
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  RAG_OVERRIDE
+  SCOPE_CHANGE
+  BUDGET_CHANGE
+  ESCALATION
+  LOGIN
+  SYNC
+}
+
+// ─── Identity & Tenancy ──────────────────────────────────────────────────────
+
+model Site {
+  id        String    @id @default(cuid())
+  name      String
+  code      String    @unique // e.g. "HND" for Houndé
+  country   String
+  timezone  String
+  wanStatus WanStatus @default(ONLINE)
+  isHq      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  users    User[]
+  projects Project[]
+
+  @@index([code])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  role         Role
+  // Site IT Leads are scoped to exactly one site; Group roles have siteId = null (HQ scope).
+  siteId       String?
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  site               Site?                @relation(fields: [siteId], references: [id])
+  ownedProjects      Project[]            @relation("ProjectOwner")
+  raisedBlockers     Blocker[]            @relation("BlockerRaisedBy")
+  assignedBlockers   Blocker[]            @relation("BlockerAssignee")
+  scopeRequests      ScopeChangeRequest[] @relation("ScopeRequestedBy")
+  scopeApprovals     ScopeChangeRequest[] @relation("ScopeApprovedBy")
+  chairedMeetings    ReviewMeeting[]
+  signedOffDecisions MeetingDecision[]
+  auditLogs          AuditLog[]
+
+  @@index([siteId])
+  @@index([email])
+}
+
+// ─── Portfolio Core ──────────────────────────────────────────────────────────
+
+model Project {
+  id                String        @id @default(cuid())
+  code              String        @unique // e.g. "GRP-2026-014" / "HND-2026-003"
+  title             String
+  description       String
+  scopeType         ScopeType
+  // GROUP projects: siteId null. SITE projects: siteId required (enforced in app layer).
+  siteId            String?
+  ownerId           String
+  status            ProjectStatus @default(PROPOSED)
+  currentGate       StageGate     @default(INTEL_GATHERING)
+  ragCalculated     RagStatus     @default(GREEN)
+  ragOverride       RagStatus?
+  ragOverrideReason String?
+  ragOverrideById   String?
+  ragOverrideAt     DateTime?
+  cobitChecklist    Json? // COBIT 2019 intake checklist snapshot
+  startDate         DateTime
+  targetEndDate     DateTime
+  actualEndDate     DateTime?
+  // Optimistic-concurrency version for offline delta sync conflict detection.
+  syncVersion       Int           @default(1)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  site         Site?               @relation(fields: [siteId], references: [id])
+  owner        User                @relation("ProjectOwner", fields: [ownerId], references: [id])
+  financials   ProjectFinancials?
+  milestones   Milestone[]
+  blockers     Blocker[]
+  scopeChanges ScopeChangeRequest[]
+  decisions    MeetingDecision[]
+
+  @@index([siteId])
+  @@index([status])
+  @@index([ragCalculated])
+  @@index([scopeType, siteId])
+}
+
+model ProjectFinancials {
+  id              String        @id @default(cuid())
+  projectId       String        @unique
+  capexBudgetUSD  Decimal       @db.Decimal(16, 2)
+  opexBudgetUSD   Decimal       @db.Decimal(16, 2)
+  capexActualUSD  Decimal       @default(0) @db.Decimal(16, 2)
+  opexActualUSD   Decimal       @default(0) @db.Decimal(16, 2)
+  localCurrency   LocalCurrency @default(USD)
+  // Units of local currency per 1 USD (e.g. XOF ≈ 605.5). Must be > 0.
+  fxRateToBase    Decimal       @default(1) @db.Decimal(16, 6)
+  sapWBSElement   String?
+  updatedAt       DateTime      @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Milestone {
+  id            String          @id @default(cuid())
+  projectId     String
+  title         String
+  targetDate    DateTime
+  actualDate    DateTime?
+  status        MilestoneStatus @default(PENDING)
+  // All milestone weights of a project should sum to 100 (validated in app layer).
+  weightPercent Int             @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
+model Blocker {
+  id                   String          @id @default(cuid())
+  projectId            String
+  raisedById           String
+  assignedToId         String?
+  title                String
+  description          String
+  severity             BlockerSeverity
+  status               BlockerStatus   @default(OPEN)
+  escalationLevel      EscalationLevel @default(SITE_IT_LEAD)
+  lastEscalatedAt      DateTime?
+  targetResolutionDate DateTime?
+  resolvedAt           DateTime?
+  resolutionNotes      String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  raisedBy   User    @relation("BlockerRaisedBy", fields: [raisedById], references: [id])
+  assignedTo User?   @relation("BlockerAssignee", fields: [assignedToId], references: [id])
+
+  @@index([projectId, status])
+  @@index([status, severity])
+}
+
+model ScopeChangeRequest {
+  id                    String         @id @default(cuid())
+  projectId             String
+  requestedById         String
+  scopeDeltaDescription String
+  budgetImpactUSD       Decimal        @db.Decimal(16, 2)
+  timeImpactDays        Int
+  status                ApprovalStatus @default(PENDING)
+  approvedById          String?
+  decidedAt             DateTime?
+  decisionNotes         String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User    @relation("ScopeRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?   @relation("ScopeApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([projectId, status])
+}
+
+// ─── Steering Committee ──────────────────────────────────────────────────────
+
+model ReviewMeeting {
+  id          String    @id @default(cuid())
+  meetingDate DateTime
+  chairedById String
+  notes       String?
+  closedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  chairedBy User              @relation(fields: [chairedById], references: [id])
+  decisions MeetingDecision[]
+}
+
+model MeetingDecision {
+  id           String       @id @default(cuid())
+  meetingId    String
+  projectId    String
+  decisionType DecisionType
+  actionTaken  String
+  signedOffById String
+  createdAt    DateTime     @default(now())
+
+  meeting    ReviewMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  project    Project       @relation(fields: [projectId], references: [id])
+  signedOffBy User         @relation(fields: [signedOffById], references: [id])
+
+  @@index([meetingId])
+  @@index([projectId])
+}
+
+// ─── Compliance (COBIT 2019 — immutable audit trail) ─────────────────────────
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  // Actor may be null for system actions (e.g. SLA sweep job).
+  userId     String?
+  action     AuditAction
+  entityType String // "Project" | "Blocker" | "ProjectFinancials" | ...
+  entityId   String
+  // JSON snapshots of state before/after the change — never updated after insert.
+  previous   Json?
+  next       Json?
+  ipAddress  String?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ─── Offline Sync ────────────────────────────────────────────────────────────
+
+model SyncMutationLog {
+  id          String   @id @default(cuid())
+  // Client-generated UUID for idempotency: replayed mutations are detected and skipped.
+  clientOpId  String   @unique
+  userId      String
+  entityType  String
+  entityId    String
+  operation   String // "create" | "update"
+  payload     Json
+  appliedAt   DateTime @default(now())
+  // If the op lost a conflict resolution, record what won.
+  conflict    Boolean  @default(false)
+  conflictNote String?
+
+  @@index([userId])
+}
