@@ -1,5 +1,9 @@
 /**
- * In-memory sliding-window rate limiter for credential endpoints.
+ * In-memory FIXED-window rate limiter for credential endpoints.
+ * (Precisely: counts reset at window boundaries — a burst straddling the
+ * boundary can see up to 2× the limit; acceptable for brute-force damping.)
+ * Blocked attempts still increment the count, so hammering extends nothing
+ * but also gains nothing.
  *
  * Per-instance by design (no shared store dependency): each app instance
  * enforces the window independently, which still reduces brute-force

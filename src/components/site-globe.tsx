@@ -86,6 +86,20 @@ export function SiteGlobe({ sites }: { sites: GlobeSite[] }): JSX.Element {
     let lastX = 0;
     let raf = 0;
     let last = performance.now();
+    let visible = true;
+
+    // getComputedStyle in the frame loop forces a style recalc per frame —
+    // resolve the theme tokens once per activation instead.
+    let colors = { line: "#c7cede", tint: "#eef1f6", label: "#5b6472" };
+    function readColors() {
+      const styles = getComputedStyle(canvas as HTMLCanvasElement);
+      colors = {
+        line: `hsl(${styles.getPropertyValue("--border")})`,
+        tint: `hsl(${styles.getPropertyValue("--secondary")})`,
+        label: `hsl(${styles.getPropertyValue("--muted-foreground")})`,
+      };
+    }
+    readColors();
 
     function draw(now: number) {
       const c = canvasRef.current;
@@ -108,9 +122,8 @@ export function SiteGlobe({ sites }: { sites: GlobeSite[] }): JSX.Element {
       const cy = cssHeight / 2;
       const radius = Math.min(cssWidth, cssHeight) / 2 - 14;
 
-      const styles = getComputedStyle(c);
-      const lineColor = `hsl(${styles.getPropertyValue("--border")})`;
-      const fillTint = `hsl(${styles.getPropertyValue("--secondary")})`;
+      const lineColor = colors.line;
+      const fillTint = colors.tint;
 
       // Sphere disc + limb.
       ctx.beginPath();
@@ -196,11 +209,11 @@ export function SiteGlobe({ sites }: { sites: GlobeSite[] }): JSX.Element {
         ctx.stroke();
 
         ctx.font = "500 9px 'JetBrains Mono', monospace";
-        ctx.fillStyle = `hsl(${styles.getPropertyValue("--muted-foreground")})`;
+        ctx.fillStyle = colors.label;
         ctx.fillText(`${s.code} (${s.projectCount})`, p.x + 7, p.y + 3);
       }
 
-      raf = requestAnimationFrame(draw);
+      if (visible) raf = requestAnimationFrame(draw);
     }
 
     function onPointerDown(e: PointerEvent) {
@@ -221,10 +234,27 @@ export function SiteGlobe({ sites }: { sites: GlobeSite[] }): JSX.Element {
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
     canvas.addEventListener("pointercancel", onPointerUp);
+
+    // Battery: stop the frame loop entirely while the globe is scrolled
+    // offscreen (rAF only auto-pauses for hidden TABS, not hidden elements).
+    const observer = new IntersectionObserver(([entry]) => {
+      const nowVisible = entry?.isIntersecting ?? true;
+      if (nowVisible && !visible) {
+        visible = true;
+        readColors(); // theme may have flipped while paused
+        last = performance.now();
+        raf = requestAnimationFrame(draw);
+      } else if (!nowVisible && visible) {
+        visible = false;
+        cancelAnimationFrame(raf);
+      }
+    });
+    observer.observe(canvas);
     raf = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(raf);
+      observer.disconnect();
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);

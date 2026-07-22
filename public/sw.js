@@ -40,20 +40,31 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return; // sync engine territory
 
-  // Immutable build assets: cache-first.
+  // Immutable build assets: cache-first. The final .catch matters: an
+  // uncached asset fetched while offline would otherwise REJECT respondWith
+  // (an unhandled rejection surfacing as a browser-level network error page).
   if (url.pathname.startsWith("/_next/static/") || url.pathname === "/icon.svg") {
     event.respondWith(
-      caches.match(req).then(
-        (hit) =>
-          hit ??
-          fetch(req).then((res) => {
-            if (res.ok) {
-              const copy = res.clone();
-              caches.open(RUNTIME).then((cache) => cache.put(req, copy));
-            }
-            return res;
-          })
-      )
+      caches
+        .match(req)
+        .then(
+          (hit) =>
+            hit ??
+            fetch(req).then((res) => {
+              if (res.ok) {
+                const copy = res.clone();
+                caches.open(RUNTIME).then((cache) => cache.put(req, copy));
+              }
+              return res;
+            })
+        )
+        .catch(
+          () =>
+            new Response("", {
+              status: 504,
+              statusText: "Offline and not cached",
+            })
+        )
     );
     return;
   }

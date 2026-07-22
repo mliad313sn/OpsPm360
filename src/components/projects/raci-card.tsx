@@ -45,12 +45,21 @@ export function RaciCard({
 
   useEffect(() => {
     if (!canWrite) return;
-    void listAssignableUsersAction(projectId).then((r) => {
-      if (r.ok) {
+    // Closure guard: ignore the resolution if the component unmounted or the
+    // project changed while the action was in flight (stale-closure setState).
+    let cancelled = false;
+    listAssignableUsersAction(projectId)
+      .then((r) => {
+        if (cancelled || !r.ok) return;
         setUsers(r.data.users);
         setUserId((prev) => prev || (r.data.users[0]?.id ?? ""));
-      }
-    });
+      })
+      .catch(() => {
+        // Offline / transient failure — the picker just stays empty.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, canWrite]);
 
   function afterAction(result: { ok: boolean; error?: string }, msg: string) {

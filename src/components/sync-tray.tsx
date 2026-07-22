@@ -132,7 +132,12 @@ export function SyncTray({ sync }: { sync: OfflineSyncState }): JSX.Element {
                         variant="secondary"
                         className="h-6"
                         onClick={() =>
-                          void resolveConflictKeepMine(op.clientOpId).then(() => sync.flushNow())
+                          void resolveConflictKeepMine(op.clientOpId)
+                            .then(() => sync.flushNow())
+                            .catch(() => {
+                              // IndexedDB write failed (quota/private mode) —
+                              // the op stays in conflict state for retry.
+                            })
                         }
                       >
                         Keep mine

@@ -335,8 +335,13 @@ export function WarRoom({
                 size="sm"
                 variant="secondary"
                 onClick={() => {
-                  void navigator.clipboard.writeText(minutes);
-                  setFeedback("Minutes copied to clipboard.");
+                  // clipboard.writeText rejects on insecure contexts / denied
+                  // permission — a bare `void` here would raise an unhandled
+                  // rejection AND lie to the user about the copy succeeding.
+                  navigator.clipboard
+                    .writeText(minutes)
+                    .then(() => setFeedback("Minutes copied to clipboard."))
+                    .catch(() => setFeedback("Copy failed — select the text manually."));
                 }}
               >
                 Copy Markdown

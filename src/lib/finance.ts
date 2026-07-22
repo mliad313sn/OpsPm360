@@ -142,7 +142,8 @@ export function usdToLocal(amountUSD: number, fxRateToBase: number): number {
   if (!Number.isFinite(amountUSD)) {
     throw new RangeError(`Invalid USD amount: ${amountUSD}`);
   }
-  // XOF has no minor unit; round to whole francs. EUR/USD keep cents.
+  // Rounded to 2 decimals here; whole-unit display for XOF (no minor unit)
+  // is a formatting concern handled by formatMoney's fraction digits.
   const raw = amountUSD * fxRateToBase;
   return Math.round(raw * 100) / 100;
 }
