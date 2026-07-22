@@ -29,7 +29,8 @@ services:
     ports:
       - "3000:3000"
 
-  # SLA sweep every 15 minutes (stand-in for Vercel Cron / K8s CronJob).
+  # Scheduler sidecar: SLA sweep every 15 min, audit retention ~daily
+  # (stand-in for Vercel Cron / K8s CronJob).
   cron:
     image: alpine:3.20
     depends_on:
@@ -38,9 +39,15 @@ services:
       CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env}
     command: >
       sh -c "apk add --no-cache curl >/dev/null &&
+             i=0;
              while true; do
                sleep 900;
                curl -fsS -X POST -H \"Authorization: Bearer $$CRON_SECRET\" http://app:3000/api/escalations || true;
+               i=$$((i+1));
+               if [ $$i -ge 96 ]; then
+                 i=0;
+                 curl -fsS -X POST -H \"Authorization: Bearer $$CRON_SECRET\" http://app:3000/api/audit-retention || true;
+               fi;
              done"
 
 volumes:

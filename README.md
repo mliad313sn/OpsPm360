@@ -31,10 +31,36 @@ priority stripes on table rows, fixed sidebar + top-bar shell, 1280px max conten
 
 ## Getting started
 
+### One-command install (recommended)
+
+The installers handle everything from scratch — OS detection, prerequisites
+(Docker, or Node 20 + PostgreSQL 16), secret generation, migrations (incl. RLS
+policies), seed data, production build, and SLA-sweep scheduling. Idempotent;
+safe to re-run.
+
+```bash
+# Linux / macOS / WSL — auto-picks Docker mode if Docker is running, else native
+./install.sh                        # interactive
+./install.sh --yes --mode docker    # unattended Docker stack
+./install.sh --yes --mode native --cron --start
+```
+
+```powershell
+# Windows (PowerShell) — uses winget (fallback: chocolatey)
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode native -Start
+```
+
+Flags: `--mode docker|native` · `--no-seed` · `--start` · `--cron` (native
+Linux/macOS: installs the 15-min SLA sweep + nightly audit retention in
+crontab; Windows registers Scheduled Tasks) · `--yes` (non-interactive).
+
+### Manual setup
+
 ```bash
 cp .env.example .env          # set DATABASE_URL, SESSION_SECRET (32+ chars), CRON_SECRET
 npm install
-npx prisma db push            # or: npx prisma migrate dev
+npx prisma migrate deploy     # applies schema incl. Row-Level Security policies
 npm run db:seed               # 6 sites, 8 users, sample portfolio
 npm run dev
 ```
