@@ -143,6 +143,14 @@ Defects caught and corrected by the autonomous audit loop before delivery:
 | GAP-008 | SRS M3 | Medium | No Earned Value Analysis | `computeEva` (PV/EV/AC/SV/CV/SPI/CPI) with zero-division and zero-weight guards, tested, on project ledger |
 | GAP-009 | SRS M4 | Medium | Conflict policy was strict server-wins, not the specified LWW | Version conflicts now resolve last-write-wins on server timestamps (future-dated client clocks capped at now); losing side still gets rebase state |
 | GAP-010 | SRS M1 | Low | `AuditLog.ipAddress` column existed but was never populated | `writeAudit` auto-captures `x-forwarded-for` / `x-real-ip` |
+| GAP-011 | Deploy | **P0** | No `prisma/migrations` baseline — `migrate deploy` on a fresh DB created no schema | Baseline `0_init` migration generated from the schema; CI drift check added |
+| GAP-012 | Offline | **P0** | No service worker — a page reload while offline failed to boot the app | `sw.js` (cache-first static assets, network-first navigations with cache fallback), PWA manifest + icon, registration in shell, `no-cache` header on the worker |
+| GAP-013 | Security | **P1** | `recalculateRag` exported from a `"use server"` module — an unauthenticated client-invokable endpoint | Moved to `server/rag-service.ts` (server-only, non-action) |
+| GAP-014 | Security | **P1** | Login endpoint had no brute-force protection | Sliding-window rate limiter: 5/15min per IP+account, 30/15min per IP (tested) |
+| GAP-015 | Security | **P1** | Minutes page showed all decisions to any authenticated user | Decisions filtered to the caller's tenant scope |
+| GAP-016 | Integrity | P2 | Offline blocker timestamps trusted unboundedly — SLA clock could be backdated to force instant CIO escalation | `occurredAt` clamped to `[now − 7d, now]` on sync |
+| GAP-017 | UX | P2 | Conflicted/rejected sync ops were a dead-end badge with no review path | Sync tray: inspect queue, see server verdicts, discard reviewed ops |
+| GAP-018 | Process | P2 | No CI — quality gates ran only manually | GitHub Actions: typecheck, tests, build+lint, migration drift check |
 
 Design decisions verified during the audit (no change required):
 

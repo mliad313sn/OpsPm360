@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { isGroupScoped } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { PrintButton } from "@/components/print-button";
 
@@ -23,6 +24,15 @@ export default async function MinutesPage({
     include: {
       chairedBy: { select: { name: true } },
       decisions: {
+        // Tenant isolation: site-scoped users only see decisions about
+        // projects within their own scope (own site + Group standards).
+        where: isGroupScoped(user)
+          ? {}
+          : {
+              project: user.siteId
+                ? { OR: [{ siteId: user.siteId }, { scopeType: "GROUP" }] }
+                : { scopeType: "GROUP" },
+            },
         include: {
           project: { select: { code: true, title: true } },
           signedOffBy: { select: { name: true } },

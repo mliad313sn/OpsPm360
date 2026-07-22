@@ -5,6 +5,8 @@ export const metadata: Metadata = {
   title: "OpsPM360 — Endeavour Mining IT PPM",
   description:
     "Endeavour Mining Group IT project portfolio management: stage-gate governance, RAG health, steering war room, offline-first for remote sites.",
+  manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }): JSX.Element {

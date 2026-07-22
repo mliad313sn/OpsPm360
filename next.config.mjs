@@ -4,6 +4,11 @@ const nextConfig = {
   poweredByHeader: false,
   headers: async () => [
     {
+      // Service workers must revalidate on every load so updates roll out.
+      source: "/sw.js",
+      headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+    },
+    {
       source: "/:path*",
       headers: [
         { key: "X-Frame-Options", value: "DENY" },

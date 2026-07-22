@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { createSession, destroySession, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { loginSchema } from "@/lib/validators";
+import { hit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/request-ip";
 
 export interface AuthFormState {
   error: string | null;
@@ -20,6 +22,16 @@ export async function loginAction(
   });
   if (!parsed.success) {
     return { error: "Enter a valid email and password (min 8 characters)." };
+  }
+
+  // Brute-force protection: 5 attempts / 15 min per IP+account pair, plus a
+  // wider per-IP ceiling across accounts.
+  const ip = getClientIp() ?? "unknown";
+  const perAccount = hit(`login:${ip}:${parsed.data.email}`, 5, 15 * 60_000);
+  const perIp = hit(`login-ip:${ip}`, 30, 15 * 60_000);
+  if (!perAccount.allowed || !perIp.allowed) {
+    const wait = Math.max(perAccount.retryAfterSeconds, perIp.retryAfterSeconds);
+    return { error: `Too many attempts. Try again in ${Math.ceil(wait / 60)} min.` };
   }
 
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });

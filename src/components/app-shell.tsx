@@ -4,9 +4,6 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  CloudOff,
-  Cloud,
-  RefreshCw,
   Mountain,
   LogOut,
   LayoutGrid,
@@ -20,7 +17,7 @@ import {
 import { useOfflineSync } from "@/offline/use-offline-sync";
 import { logoutAction } from "@/server/actions/auth";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { SyncTray } from "@/components/sync-tray";
 import { cn } from "@/lib/utils";
 
 export interface ShellUser {
@@ -50,6 +47,16 @@ export function AppShell({
   const router = useRouter();
   const pathname = usePathname();
   const sync = useOfflineSync();
+
+  // Cold-start offline: precache the app shell so a page reload on a downed
+  // WAN still boots the UI (the Dexie cache + outbox take it from there).
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {
+        // Registration failure (unsupported/private mode) — online mode unaffected.
+      });
+    }
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -152,25 +159,9 @@ export function AppShell({
             Site: {user.siteName ?? "All regions"}
           </span>
 
-          <button
-            type="button"
-            onClick={() => void sync.flushNow()}
-            className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-            title={
-              sync.online
-                ? "Connected — click to sync now"
-                : "Offline — changes queue locally and sync on reconnect"
-            }
-          >
-            {sync.online ? (
-              <Cloud className="h-4 w-4 text-rag-green" aria-hidden />
-            ) : (
-              <CloudOff className="h-4 w-4 text-rag-amber" aria-hidden />
-            )}
-            {sync.syncing ? <RefreshCw className="h-3 w-3 animate-spin" aria-hidden /> : null}
-            {sync.pendingOps > 0 ? <Badge variant="amber">{sync.pendingOps} queued</Badge> : null}
-            {sync.conflictOps > 0 ? <Badge variant="red">{sync.conflictOps} conflicts</Badge> : null}
-          </button>
+          <div className="ml-auto">
+            <SyncTray sync={sync} />
+          </div>
 
           <div className="text-right text-xs">
             <div className="font-medium">{user.name}</div>

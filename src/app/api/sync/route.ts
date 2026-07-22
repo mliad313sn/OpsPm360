@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { assertProjectWrite, projectReadScope, ForbiddenError } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
-import { recalculateRag } from "@/server/actions/projects";
+import { recalculateRag } from "@/server/rag-service";
 import {
   syncBatchSchema,
   type SyncOperation,
@@ -159,6 +159,16 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
         }
         assertProjectWrite(user, project);
 
+        // Preserve the offline timestamp so SLA clocks start when the blocker
+        // was actually raised — but clamp to [now - 7d, now] so a skewed or
+        // malicious client clock cannot trigger instant CIO escalation or
+        // future-date the record.
+        const now = Date.now();
+        const MAX_BACKDATE_MS = 7 * 86_400_000;
+        const clampedCreatedAt = new Date(
+          Math.min(now, Math.max(now - MAX_BACKDATE_MS, op.occurredAt.getTime()))
+        );
+
         await prisma.$transaction(async (tx) => {
           const blocker = await tx.blocker.create({
             data: {
@@ -168,9 +178,7 @@ async function applyOperation(user: SessionUser, op: SyncOperation): Promise<Syn
               description,
               severity,
               targetResolutionDate: targetResolutionDate ?? null,
-              // Preserve the offline timestamp so SLA clocks start when the
-              // blocker was actually raised, not when WAN came back.
-              createdAt: op.occurredAt <= new Date() ? op.occurredAt : new Date(),
+              createdAt: clampedCreatedAt,
             },
           });
           await tx.syncMutationLog.create({

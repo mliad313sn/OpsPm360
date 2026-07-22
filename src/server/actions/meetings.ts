@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { assertSteeringAuthority, projectReadScope, toActionError } from "@/lib/rbac";
@@ -95,11 +96,12 @@ export async function recordDecisionAction(raw: unknown): Promise<ActionResult> 
 
 /** Close the meeting and return a Markdown minutes summary (decision ledger). */
 export async function closeMeetingAction(
-  meetingId: string
+  rawMeetingId: string
 ): Promise<ActionResult<{ meetingId: string; minutesMarkdown: string }>> {
   try {
     const user = await requireSession();
     assertSteeringAuthority(user);
+    const meetingId = z.string().cuid().parse(rawMeetingId);
 
     const meeting = await prisma.reviewMeeting.findUnique({
       where: { id: meetingId },

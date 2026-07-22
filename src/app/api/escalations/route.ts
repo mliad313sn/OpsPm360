@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/audit";
 import { runSlaSweep } from "@/lib/sla";
 import { notifyEscalation } from "@/lib/notify";
-import { recalculateRag } from "@/server/actions/projects";
+import { recalculateRag } from "@/server/rag-service";
 
 export const dynamic = "force-dynamic";
 

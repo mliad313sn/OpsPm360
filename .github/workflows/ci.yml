@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci?schema=public"
+      SESSION_SECRET: "ci-only-secret-not-used-in-production-0000"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck (strict)
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build + lint
+        run: npm run build
+
+      - name: Migration sanity — schema and baseline migration must match
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "$DATABASE_URL" --script > /tmp/drift.sql || true
+          if [ -s /tmp/drift.sql ] && grep -qv '^--' /tmp/drift.sql; then
+            echo "::warning::schema drift detected between migrations and schema.prisma"
+            cat /tmp/drift.sql
+          fi

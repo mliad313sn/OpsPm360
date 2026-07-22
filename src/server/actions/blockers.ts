@@ -6,7 +6,8 @@ import { requireSession } from "@/lib/auth";
 import { assertProjectWrite, projectReadScope, toActionError } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { createBlockerSchema, resolveBlockerSchema } from "@/lib/validators";
-import { recalculateRag, type ActionResult } from "@/server/actions/projects";
+import { type ActionResult } from "@/server/actions/projects";
+import { recalculateRag } from "@/server/rag-service";
 
 export async function createBlockerAction(
   raw: unknown

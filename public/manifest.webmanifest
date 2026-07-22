@@ -1,0 +1,17 @@
+{
+  "name": "OpsPM360 — Endeavour Mining IT PPM",
+  "short_name": "OpsPM360",
+  "description": "IT project portfolio management for Group and Site IT, offline-capable for remote mine sites.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#4338CA",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -15,7 +15,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
     pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico"
+    pathname === "/favicon.ico" ||
+    pathname === "/sw.js" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/icon.svg"
   ) {
     return NextResponse.next();
   }
