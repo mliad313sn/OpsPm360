@@ -170,6 +170,15 @@ export const createRiskSchema = z.object({
 });
 export type CreateRiskInput = z.infer<typeof createRiskSchema>;
 
+export const raciRoleSchema = z.enum(["R", "A", "C", "I"]);
+
+export const assignRaciSchema = z.object({
+  projectId: z.string().cuid(),
+  userId: z.string().cuid(),
+  role: raciRoleSchema,
+});
+export type AssignRaciInput = z.infer<typeof assignRaciSchema>;
+
 export const createDependencySchema = z
   .object({
     predecessorProjectId: z.string().cuid(),

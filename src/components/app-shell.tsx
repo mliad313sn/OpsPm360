@@ -11,6 +11,7 @@ import {
   Radio,
   Plus,
   MapPin,
+  Presentation,
   Settings,
   LifeBuoy,
 } from "lucide-react";
@@ -30,6 +31,7 @@ const NAV = [
   { href: "/", label: "Portfolio", key: "D", icon: LayoutGrid },
   { href: "/board", label: "Board", key: "B", icon: Columns3 },
   { href: "/meeting", label: "War Room", key: "M", icon: Radio },
+  { href: "/review", label: "Exec Review", key: "P", icon: Presentation },
 ] as const;
 
 /**
@@ -78,6 +80,9 @@ export function AppShell({
           break;
         case "b":
           router.push("/board");
+          break;
+        case "p":
+          router.push("/review");
           break;
       }
     }

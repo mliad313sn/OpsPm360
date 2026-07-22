@@ -285,6 +285,7 @@ export interface ProjectDetail extends PortfolioRow {
     status: string;
     raisedByName: string;
   }[];
+  raci: { id: string; userId: string; userName: string; role: string }[];
   upstreamDeps: {
     id: string;
     predecessorCode: string | null; // null = not visible to caller (cross-site)
@@ -355,6 +356,12 @@ export async function fetchProjectDetail(
     });
     const predById = new Map(predecessors.map((x) => [x.id, x]));
 
+    const raci = await db.raciAssignment.findMany({
+      where: { entityType: "PROJECT", entityId: p.id },
+      include: { user: { select: { name: true } } },
+      orderBy: { role: "asc" },
+    });
+
   const fin = p.financials
     ? computeVariance({
         capexBudgetUSD: Number(p.financials.capexBudgetUSD),
@@ -423,6 +430,12 @@ export async function fetchProjectDetail(
       contingencyPlan: r.contingencyPlan,
       status: r.status,
       raisedByName: r.raisedBy.name,
+    })),
+    raci: raci.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      userName: r.user.name,
+      role: r.role,
     })),
     upstreamDeps: upEdges.map((e) => {
       const pred = predById.get(e.predecessorProjectId);

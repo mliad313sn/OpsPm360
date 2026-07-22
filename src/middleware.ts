@@ -14,7 +14,9 @@ import { jwtVerify, SignJWT } from "jose";
 const SESSION_COOKIE = "opspm_session";
 const ACCESS_TTL_SECONDS = 15 * 60;
 
-const PUBLIC_PATHS = ["/login", "/api/escalations", "/api/audit-retention", "/api/auth/oidc"];
+// "/r" (deep-link resolver) is public: it verifies its own signed token and
+// bounces unauthenticated users to /login while preserving the destination.
+const PUBLIC_PATHS = ["/login", "/api/escalations", "/api/audit-retention", "/api/auth/oidc", "/r"];
 const PUBLIC_FILES = ["/favicon.ico", "/sw.js", "/manifest.webmanifest", "/icon.svg"];
 
 function getSecret(): Uint8Array | null {

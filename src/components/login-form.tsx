@@ -21,9 +21,11 @@ const initialState: AuthFormState = { error: null };
 export function LoginForm({
   ssoEnabled,
   ssoError,
+  next,
 }: {
   ssoEnabled: boolean;
   ssoError: string | null;
+  next: string | null;
 }): JSX.Element {
   const [state, formAction] = useFormState(loginAction, initialState);
 
@@ -61,6 +63,7 @@ export function LoginForm({
             </>
           ) : null}
           <form action={formAction} className="space-y-3">
+            {next ? <input type="hidden" name="next" value={next} /> : null}
             <label className="block space-y-1">
               <span className="text-xs text-muted-foreground">Email</span>
               <Input

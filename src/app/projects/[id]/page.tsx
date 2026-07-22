@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { AppShell } from "@/components/app-shell";
 import { GateStepper } from "@/components/projects/gate-stepper";
 import { DependenciesCard } from "@/components/projects/dependencies-card";
+import { RaciCard } from "@/components/projects/raci-card";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { projectReadScope } from "@/lib/rbac";
 import { withUserDb } from "@/server/db";
@@ -287,6 +288,12 @@ export default async function ProjectDetailPage({
             requestedByName: s.requestedByName,
           }))}
           canSteer={user.role === "GROUP_IT_MANAGER" || user.role === "SYSTEM_ADMIN"}
+          canWrite={user.role !== "EXEC_STAKEHOLDER"}
+        />
+
+        <RaciCard
+          projectId={project.id}
+          raci={project.raci}
           canWrite={user.role !== "EXEC_STAKEHOLDER"}
         />
 

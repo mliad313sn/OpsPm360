@@ -200,6 +200,19 @@ export async function advanceGateAction(
         };
       }
 
+      // RACI: when an Accountable (A) is designated, only they — or steering
+      // roles — may sign the gate off.
+      const accountable = await tx.raciAssignment.findFirst({
+        where: { entityType: "PROJECT", entityId: project.id, role: "A" },
+        include: { user: { select: { name: true } } },
+      });
+      const isSteering = user.role === "GROUP_IT_MANAGER" || user.role === "SYSTEM_ADMIN";
+      if (accountable && accountable.userId !== user.id && !isSteering) {
+        return {
+          error: `Gate sign-off requires the Accountable owner (${accountable.user.name}) or a Group IT Manager`,
+        };
+      }
+
       const existingSnapshots: Record<string, unknown> =
         project.gateChecklists &&
         typeof project.gateChecklists === "object" &&

@@ -191,7 +191,7 @@ export function ProjectActions({
         </CardHeader>
         <CardContent className="space-y-2">
           {blockers.map((b) => (
-            <div key={b.id} className="rounded border border-border/50 p-2 text-sm">
+            <div key={b.id} id={`blocker-${b.id}`} className="rounded border border-border/50 p-2 text-sm scroll-mt-20 target:border-primary">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge
                   variant={
@@ -460,7 +460,7 @@ function RiskPanel({
           const score = riskScore(r.probability, r.impact);
           const band = riskBand(score);
           return (
-            <div key={r.id} className="rounded border border-border/50 p-2 text-sm">
+            <div key={r.id} id={`risk-${r.id}`} className="rounded border border-border/50 p-2 text-sm scroll-mt-20 target:border-primary">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={bandVariant(band)} dot>
                   {band} · P{r.probability}×I{r.impact}={score}

@@ -113,6 +113,13 @@ enum DependencyType {
   START_TO_FINISH
 }
 
+enum RaciRole {
+  R // Responsible — the doer
+  A // Accountable — single sign-off owner (unique per entity, DB-enforced)
+  C // Consulted — SME input required
+  I // Informed — receives updates
+}
+
 enum DecisionType {
   UNBLOCK
   SCOPE_APPROVED
@@ -177,6 +184,7 @@ model User {
   chairedMeetings    ReviewMeeting[]
   signedOffDecisions MeetingDecision[]
   auditLogs          AuditLog[]
+  raciAssignments    RaciAssignment[]
 
   @@index([siteId])
   @@index([email])
@@ -335,6 +343,23 @@ model Risk {
   materializedBlocker Blocker? @relation("RiskMaterialized", fields: [materializedBlockerId], references: [id])
 
   @@index([projectId, status])
+}
+
+// RACI accountability matrix. Generic (entityType, entityId) so gates, risks,
+// and blockers can be covered later; PROJECT is the first-class citizen.
+// Exactly ONE Accountable per entity is enforced by a partial unique index.
+model RaciAssignment {
+  id         String   @id @default(cuid())
+  entityType String // "PROJECT" (extensible: "STAGE_GATE" | "RISK" | "BLOCKER")
+  entityId   String
+  userId     String
+  role       RaciRole
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, userId, role])
+  @@index([entityType, entityId])
 }
 
 // Cross-project dependency edge (project-level DAG; cycle-checked on write).

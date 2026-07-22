@@ -57,7 +57,11 @@ export async function loginAction(
     entityId: user.id,
   });
 
-  redirect("/");
+  // Deep-link continuation: only same-origin app paths are honored.
+  const next = formData.get("next");
+  const target =
+    typeof next === "string" && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  redirect(target);
 }
 
 export async function logoutAction(): Promise<void> {

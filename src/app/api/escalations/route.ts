@@ -4,6 +4,7 @@ import { writeAudit } from "@/lib/audit";
 import { runSlaSweep } from "@/lib/sla";
 import { notifyEscalation } from "@/lib/notify";
 import { recalculateRag } from "@/server/rag-service";
+import { notifyProjectRaci } from "@/server/raci-notify";
 import { withSystemDb } from "@/server/db";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +86,15 @@ async function runSweepRequest(req: NextRequest): Promise<NextResponse> {
       from: decision.from,
       to: decision.to,
       reason: decision.reason,
+    });
+
+    // RACI email with a deep link straight to the escalated blocker.
+    await notifyProjectRaci({
+      projectId: blocker.projectId,
+      headline: `Blocker escalated to ${decision.to.replaceAll("_", " ")}: ${blocker.title}`,
+      detailLines: [decision.reason],
+      ctaLabel: "Review blocker",
+      deepLink: { entityType: "BLOCKER", entityId: blocker.id, projectId: blocker.projectId },
     });
   }
 
