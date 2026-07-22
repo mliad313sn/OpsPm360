@@ -7,9 +7,22 @@ import { AppShell } from "@/components/app-shell";
 import { PortfolioTable } from "@/components/portfolio-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RagBadge } from "@/components/ui/badge";
+import { SiteGlobe, type GlobeSite } from "@/components/site-globe";
 import { formatMoneyCompact } from "@/lib/finance";
 import { portfolioHealth } from "@/lib/rag";
 import { cn } from "@/lib/utils";
+
+/** Approximate coordinates of the operation's locations for the globe widget. */
+const SITE_COORDS: Record<string, { code: string; lat: number; lon: number }> = {
+  "Sabodala-Massawa": { code: "SBD", lat: 13.1, lon: -12.2 },
+  Ity: { code: "ITY", lat: 6.9, lon: -8.1 },
+  Houndé: { code: "HND", lat: 11.5, lon: -3.5 },
+  Mana: { code: "MNA", lat: 12.7, lon: -3.9 },
+  Boungou: { code: "BGU", lat: 11.6, lon: 0.6 },
+  Group: { code: "GRP", lat: 51.5, lon: -0.1 }, // corporate HQ (London)
+};
+
+const RAG_WORST: Record<string, number> = { RED: 0, AMBER: 1, GREEN: 2 };
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +67,28 @@ export default async function DashboardPage(): Promise<JSX.Element> {
   }
   const siteRows = [...bySite.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const maxCount = Math.max(1, ...siteRows.map(([, v]) => v.red + v.amber + v.green));
+
+  // Globe beacons: one per location, colored by its WORST active project RAG.
+  const globeSites: GlobeSite[] = [];
+  for (const p of active) {
+    const key = p.siteName ?? "Group";
+    const coords = SITE_COORDS[key];
+    if (!coords) continue;
+    const existing = globeSites.find((g) => g.name === key);
+    if (existing) {
+      existing.projectCount += 1;
+      if ((RAG_WORST[p.rag] ?? 3) < (RAG_WORST[existing.rag] ?? 3)) existing.rag = p.rag;
+    } else {
+      globeSites.push({
+        code: coords.code,
+        name: key,
+        lat: coords.lat,
+        lon: coords.lon,
+        rag: p.rag,
+        projectCount: 1,
+      });
+    }
+  }
 
   return (
     <AppShell user={{ name: user.name, role: user.role, siteName }}>
@@ -217,6 +252,17 @@ export default async function DashboardPage(): Promise<JSX.Element> {
               })}
               {alerts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No open alerts. 🎉</p>
+              ) : null}
+
+              {/* Site Distribution globe (design: executive dashboard widget) */}
+              {globeSites.length > 0 ? (
+                <div className="border-t pt-3">
+                  <p className="stat-label mb-1">Site distribution</p>
+                  <SiteGlobe sites={globeSites} />
+                  <p className="meta mt-1 text-center text-[10px] text-muted-foreground">
+                    Drag to rotate · beacon = worst active RAG per location
+                  </p>
+                </div>
               ) : null}
             </CardContent>
           </Card>
