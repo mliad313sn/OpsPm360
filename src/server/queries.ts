@@ -88,6 +88,84 @@ export async function fetchPortfolio(user: SessionUser): Promise<PortfolioRow[]>
   });
 }
 
+/** Recent-alert feed entries for the executive dashboard (design: Recent Alerts). */
+export interface AlertItem {
+  id: string;
+  kind: "ESCALATION" | "RAG_OVERRIDE" | "SCOPE_PENDING" | "CRITICAL_BLOCKER";
+  title: string;
+  detail: string;
+  at: Date;
+  projectId: string;
+}
+
+export async function fetchAlerts(user: SessionUser, limit = 6): Promise<AlertItem[]> {
+  const scope = projectReadScope(user);
+
+  const [escalated, overridden, pendingScope] = await Promise.all([
+    prisma.blocker.findMany({
+      where: { project: scope, status: { not: "RESOLVED" } },
+      include: { project: { select: { id: true, code: true } } },
+      orderBy: [{ lastEscalatedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+      take: limit,
+    }),
+    prisma.project.findMany({
+      where: { ...scope, ragOverrideAt: { not: null } },
+      select: {
+        id: true,
+        code: true,
+        ragOverride: true,
+        ragOverrideReason: true,
+        ragOverrideAt: true,
+      },
+      orderBy: { ragOverrideAt: "desc" },
+      take: limit,
+    }),
+    prisma.scopeChangeRequest.findMany({
+      where: { project: scope, status: "PENDING" },
+      include: { project: { select: { id: true, code: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+  ]);
+
+  const alerts: AlertItem[] = [
+    ...escalated.map((b): AlertItem => ({
+      id: `blk-${b.id}`,
+      kind: b.lastEscalatedAt
+        ? "ESCALATION"
+        : b.severity === "CRITICAL"
+          ? "CRITICAL_BLOCKER"
+          : "ESCALATION",
+      title: b.lastEscalatedAt
+        ? `Escalated to ${b.escalationLevel.replaceAll("_", " ")}`
+        : `${b.severity} blocker open`,
+      detail: `${b.project.code}: ${b.title}`,
+      at: b.lastEscalatedAt ?? b.createdAt,
+      projectId: b.project.id,
+    })),
+    ...overridden.map((p): AlertItem => ({
+      id: `ovr-${p.id}`,
+      kind: "RAG_OVERRIDE",
+      title: `RAG overridden to ${p.ragOverride ?? "?"}`,
+      detail: `${p.code}: ${p.ragOverrideReason ?? ""}`,
+      at: p.ragOverrideAt ?? new Date(0),
+      projectId: p.id,
+    })),
+    ...pendingScope.map((s): AlertItem => ({
+      id: `scp-${s.id}`,
+      kind: "SCOPE_PENDING",
+      title: "Scope change awaiting approval",
+      detail: `${s.project.code}: ${Number(s.budgetImpactUSD) >= 0 ? "+" : ""}$${Math.round(
+        Number(s.budgetImpactUSD) / 1000
+      )}K / ${s.timeImpactDays >= 0 ? "+" : ""}${s.timeImpactDays}d`,
+      at: s.createdAt,
+      projectId: s.project.id,
+    })),
+  ];
+
+  return alerts.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, limit);
+}
+
 export interface ProjectDetail extends PortfolioRow {
   milestones: {
     id: string;

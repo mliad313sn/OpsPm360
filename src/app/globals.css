@@ -1,24 +1,27 @@
+@import url("https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Slate & Indigo Enterprise — light, high-density, tonal layers (Stitch DESIGN.md) */
 @layer base {
   :root {
-    --background: 240 10% 4%;
-    --foreground: 0 0% 95%;
-    --card: 240 8% 8%;
-    --card-foreground: 0 0% 95%;
-    --primary: 43 74% 49%;
-    --primary-foreground: 240 10% 4%;
-    --secondary: 240 6% 14%;
-    --secondary-foreground: 0 0% 90%;
-    --muted: 240 6% 12%;
-    --muted-foreground: 240 5% 60%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 6% 18%;
-    --input: 240 6% 18%;
-    --ring: 43 74% 49%;
+    --background: 220 33% 98%; /* slate-50 canvas */
+    --foreground: 217 63% 12%; /* slate-900 text */
+    --card: 0 0% 100%;
+    --card-foreground: 217 63% 12%;
+    --primary: 245 58% 51%; /* indigo-700 #4338CA */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 27% 94%; /* slate-100 */
+    --secondary-foreground: 217 33% 17%;
+    --muted: 220 27% 94%;
+    --muted-foreground: 215 16% 40%; /* slate-600 */
+    --destructive: 0 79% 42%; /* #ba1a1a */
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 25% 88%; /* slate-200 */
+    --input: 213 20% 82%; /* slate-300 */
+    --ring: 243 66% 59%; /* indigo-600 focus */
     --radius: 0.5rem;
   }
 
@@ -28,14 +31,49 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 14px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: "Hanken Grotesk", Inter, system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    @apply bg-primary/20;
   }
 }
 
 @layer utilities {
+  /* Level-1 surface: white card with slate-200 border, no heavy shadow */
   .glass {
-    @apply bg-card/70 backdrop-blur-md border border-border/60;
+    @apply bg-card border border-border rounded-lg;
   }
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+  /* JetBrains Mono metadata: codes, timestamps, uppercase card labels */
+  .meta {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    letter-spacing: 0.02em;
+  }
+  .stat-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    @apply text-[11px] font-medium uppercase tracking-[0.05em] text-muted-foreground;
+  }
+  /* Table headers per design: slate-100 band, uppercase mono */
+  .th-band {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    @apply bg-secondary text-[10px] font-medium uppercase tracking-[0.05em] text-muted-foreground;
+  }
+}
+
+@media print {
+  .glass {
+    border: none;
   }
 }

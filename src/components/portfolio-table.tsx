@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 import type { PortfolioRow } from "@/server/queries";
 import { refreshProjectCache, readProjectCache } from "@/offline/sync-engine";
 import type { CachedProject } from "@/offline/db";
-import { RagBadge, Badge } from "@/components/ui/badge";
+import { RagBadge, RagStripe, Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneyCompact } from "@/lib/finance";
@@ -180,7 +180,8 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }): JSX.Element 
       <div className="glass overflow-x-auto rounded-lg">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <tr className="th-band border-b text-left">
+              <th className="w-2 px-2 py-2"></th>
               <th className="px-3 py-2">Code</th>
               <th className="px-3 py-2">Project</th>
               <th className="px-3 py-2">Site</th>
@@ -195,8 +196,11 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }): JSX.Element 
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.id} className="border-b border-border/40 hover:bg-secondary/40">
-                <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
+              <tr key={r.id} className="border-b border-border/60 hover:bg-secondary/40">
+                <td className="px-2 py-2">
+                  <RagStripe rag={r.rag} />
+                </td>
+                <td className="meta px-3 py-2 text-xs text-muted-foreground">{r.code}</td>
                 <td className="px-3 py-2">
                   <Link href={`/projects/${r.id}`} className="font-medium hover:text-primary">
                     {r.title}
@@ -226,7 +230,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }): JSX.Element 
             ))}
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">
                   No projects match the current filter.
                 </td>
               </tr>

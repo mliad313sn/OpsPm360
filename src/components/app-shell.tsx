@@ -2,12 +2,26 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { CloudOff, Cloud, RefreshCw, Mountain, LogOut } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  CloudOff,
+  Cloud,
+  RefreshCw,
+  Mountain,
+  LogOut,
+  LayoutGrid,
+  Columns3,
+  Radio,
+  Plus,
+  MapPin,
+  Settings,
+  LifeBuoy,
+} from "lucide-react";
 import { useOfflineSync } from "@/offline/use-offline-sync";
 import { logoutAction } from "@/server/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 export interface ShellUser {
   name: string;
@@ -15,9 +29,16 @@ export interface ShellUser {
   siteName: string | null;
 }
 
+const NAV = [
+  { href: "/", label: "Portfolio", key: "D", icon: LayoutGrid },
+  { href: "/board", label: "Board", key: "B", icon: Columns3 },
+  { href: "/meeting", label: "War Room", key: "M", icon: Radio },
+] as const;
+
 /**
- * App chrome: top nav, offline/sync indicator, global keyboard shortcuts.
- *  M -> Meeting (War Room)   N -> New Project   D -> Dashboard   B -> Board
+ * Slate & Indigo shell: fixed sidebar (brand, primary CTA, nav, settings) +
+ * top bar (site context, sync indicator, identity).
+ * Shortcuts: D dashboard · B board · M war room · N new project.
  */
 export function AppShell({
   user,
@@ -27,6 +48,7 @@ export function AppShell({
   children: React.ReactNode;
 }): JSX.Element {
   const router = useRouter();
+  const pathname = usePathname();
   const sync = useOfflineSync();
 
   useEffect(() => {
@@ -57,31 +79,83 @@ export function AppShell({
   }, [router]);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="glass sticky top-0 z-40 flex h-12 items-center gap-4 px-4">
-        <Link href="/" className="flex items-center gap-2 font-semibold">
-          <Mountain className="h-5 w-5 text-primary" aria-hidden />
-          <span>OpsPM360</span>
-        </Link>
-        <nav className="flex items-center gap-1 text-sm">
-          <Link href="/" className="rounded px-2 py-1 hover:bg-secondary">
-            Dashboard <kbd className="ml-1 text-[10px] text-muted-foreground">D</kbd>
+    <div className="flex min-h-screen">
+      {/* Sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r bg-card md:flex">
+        <div className="flex items-center gap-2.5 px-5 pb-2 pt-5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Mountain className="h-5 w-5" aria-hidden />
+          </span>
+          <div>
+            <p className="font-display text-base font-bold leading-tight">OpsPM360</p>
+            <p className="stat-label">{user.siteName ? "Site level" : "Group level"}</p>
+          </div>
+        </div>
+        <div className="px-4 py-3">
+          <Link
+            href="/projects/new"
+            className="meta flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-indigo-deep"
+          >
+            <Plus className="h-4 w-4" aria-hidden /> New Project
           </Link>
-          <Link href="/board" className="rounded px-2 py-1 hover:bg-secondary">
-            Board <kbd className="ml-1 text-[10px] text-muted-foreground">B</kbd>
-          </Link>
-          <Link href="/meeting" className="rounded px-2 py-1 hover:bg-secondary">
-            War Room <kbd className="ml-1 text-[10px] text-muted-foreground">M</kbd>
-          </Link>
-          <Link href="/projects/new" className="rounded px-2 py-1 hover:bg-secondary">
-            New Project <kbd className="ml-1 text-[10px] text-muted-foreground">N</kbd>
-          </Link>
+        </div>
+        <nav className="flex-1 space-y-1 px-3">
+          {NAV.map((item) => {
+            const active =
+              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "meta flex items-center gap-3 rounded-md px-3 py-2 text-sm",
+                  active
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                )}
+              >
+                <item.icon className="h-4 w-4" aria-hidden />
+                {item.label}
+                <kbd className="ml-auto text-[10px] opacity-60">{item.key}</kbd>
+              </Link>
+            );
+          })}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="space-y-1 border-t px-3 py-4">
+          <p className="meta flex items-center gap-3 px-3 py-1.5 text-sm text-muted-foreground">
+            <Settings className="h-4 w-4" aria-hidden /> Settings
+          </p>
+          <p className="meta flex items-center gap-3 px-3 py-1.5 text-sm text-muted-foreground">
+            <LifeBuoy className="h-4 w-4" aria-hidden /> Support
+          </p>
+        </div>
+      </aside>
+
+      {/* Main column */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-60">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-card px-4 md:px-6">
+          {/* Mobile nav */}
+          <nav className="flex items-center gap-1 md:hidden">
+            {NAV.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded px-2 py-1 text-sm hover:bg-secondary"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+
+          <span className="meta hidden items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground md:flex">
+            <MapPin className="h-3.5 w-3.5" aria-hidden />
+            Site: {user.siteName ?? "All regions"}
+          </span>
+
           <button
             type="button"
             onClick={() => void sync.flushNow()}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             title={
               sync.online
                 ? "Connected — click to sync now"
@@ -95,25 +169,21 @@ export function AppShell({
             )}
             {sync.syncing ? <RefreshCw className="h-3 w-3 animate-spin" aria-hidden /> : null}
             {sync.pendingOps > 0 ? <Badge variant="amber">{sync.pendingOps} queued</Badge> : null}
-            {sync.conflictOps > 0 ? (
-              <Badge variant="red">{sync.conflictOps} conflicts</Badge>
-            ) : null}
+            {sync.conflictOps > 0 ? <Badge variant="red">{sync.conflictOps} conflicts</Badge> : null}
           </button>
+
           <div className="text-right text-xs">
             <div className="font-medium">{user.name}</div>
-            <div className="text-muted-foreground">
-              {user.role.replaceAll("_", " ")}
-              {user.siteName ? ` · ${user.siteName}` : " · Group"}
-            </div>
+            <div className="stat-label">{user.role.replaceAll("_", " ")}</div>
           </div>
           <form action={logoutAction}>
             <Button type="submit" variant="ghost" size="icon" title="Sign out">
               <LogOut className="h-4 w-4" aria-hidden />
             </Button>
           </form>
-        </div>
-      </header>
-      <main className="flex-1 p-4">{children}</main>
+        </header>
+        <main className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">{children}</main>
+      </div>
     </div>
   );
 }

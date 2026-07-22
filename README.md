@@ -24,6 +24,11 @@ Boungou). Built offline-first for high-latency/unstable WAN links.
 Next.js 14 (App Router, Server Actions, Route Handlers) · TypeScript (strict, no `any`) ·
 Prisma + PostgreSQL · Dexie.js · Tailwind CSS + shadcn-style components · Zod · jose · Vitest.
 
+**Design system:** "Slate & Indigo Enterprise" (Stitch) — light slate surfaces with Indigo 700
+primary actions, tonal layers + 1px slate borders instead of shadows, Hanken Grotesk headlines /
+Inter body / JetBrains Mono for codes-labels-timestamps, pill status chips with dots, RAG
+priority stripes on table rows, fixed sidebar + top-bar shell, 1280px max content width.
+
 ## Getting started
 
 ```bash

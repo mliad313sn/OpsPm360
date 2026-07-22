@@ -32,10 +32,22 @@ const config: Config = {
           foreground: "hsl(var(--destructive-foreground))",
         },
         rag: {
-          red: "#EF4444",
-          amber: "#F59E0B",
-          green: "#10B981",
+          red: "#DC2626",
+          amber: "#D97706",
+          green: "#059669",
         },
+        indigo: {
+          brand: "#4338CA",
+          deep: "#2A14B4",
+        },
+      },
+      fontFamily: {
+        display: ['"Hanken Grotesk"', "Inter", "system-ui", "sans-serif"],
+        body: ["Inter", "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
+      },
+      maxWidth: {
+        content: "1280px",
       },
       borderRadius: {
         lg: "var(--radius)",

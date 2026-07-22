@@ -32,6 +32,7 @@ export const decisionTypeSchema = z.enum([
   "PAUSE",
   "RESUME",
   "ESCALATE_TO_CIO",
+  "NOTE",
 ]);
 
 const isoDate = z.coerce.date();

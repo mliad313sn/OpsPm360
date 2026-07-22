@@ -4,6 +4,7 @@ import { fetchProjectDetail } from "@/server/queries";
 import { auditHistory } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { AppShell } from "@/components/app-shell";
+import { GateStepper } from "@/components/projects/gate-stepper";
 import { ProjectActions } from "@/components/projects/project-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, RagBadge } from "@/components/ui/badge";
@@ -66,6 +67,8 @@ export default async function ProjectDetailPage({
             RAG override active ({project.ragOverride}): {project.ragOverrideReason}
           </p>
         ) : null}
+
+        <GateStepper currentGate={project.currentGate} />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
@@ -143,9 +146,51 @@ export default async function ProjectDetailPage({
 
           <Card>
             <CardHeader>
-              <CardTitle>Milestones</CardTitle>
+              <CardTitle>Milestone timeline</CardTitle>
             </CardHeader>
             <CardContent>
+              {(() => {
+                const start = project.startDate.getTime();
+                const end = project.targetEndDate.getTime();
+                const span = Math.max(1, end - start);
+                const now = Date.now();
+                const nowPct = Math.min(100, Math.max(0, ((now - start) / span) * 100));
+                return (
+                  <div className="mb-4">
+                    <div className="relative h-2 rounded-full bg-secondary">
+                      <div
+                        className="absolute inset-y-0 left-0 rounded-full bg-primary/25"
+                        style={{ width: `${nowPct}%` }}
+                      />
+                      {project.milestones.map((m) => {
+                        const pct = Math.min(
+                          100,
+                          Math.max(0, ((m.targetDate.getTime() - start) / span) * 100)
+                        );
+                        const color =
+                          m.status === "COMPLETED"
+                            ? "bg-rag-green"
+                            : m.status === "DELAYED"
+                              ? "bg-rag-red"
+                              : "bg-primary";
+                        return (
+                          <span
+                            key={m.id}
+                            title={`${m.title} — ${formatDate(m.targetDate)}`}
+                            className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-card ${color}`}
+                            style={{ left: `${pct}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="meta mt-1.5 flex justify-between text-[10px] text-muted-foreground">
+                      <span>{formatDate(project.startDate)}</span>
+                      <span>today</span>
+                      <span>{formatDate(project.targetEndDate)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <ul className="space-y-1.5 text-sm">
                 {project.milestones.map((m) => (
                   <li key={m.id} className="flex items-center gap-2">
@@ -153,11 +198,12 @@ export default async function ProjectDetailPage({
                       variant={
                         m.status === "COMPLETED" ? "green" : m.status === "DELAYED" ? "red" : "default"
                       }
+                      dot
                     >
                       {m.status}
                     </Badge>
                     <span>{m.title}</span>
-                    <span className="ml-auto text-xs text-muted-foreground">
+                    <span className="meta ml-auto text-xs text-muted-foreground">
                       {m.weightPercent}% · due {formatDate(m.targetDate)}
                       {m.actualDate ? ` · done ${formatDate(m.actualDate)}` : ""}
                     </span>
@@ -197,22 +243,69 @@ export default async function ProjectDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Audit trail (COBIT 2019)</CardTitle>
+            <CardTitle>Audit Trail</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Showing last {audit.length} state-changing actions (COBIT 2019).
+            </p>
           </CardHeader>
-          <CardContent>
-            <ul className="space-y-1 text-xs">
-              {audit.map((a) => (
-                <li key={a.id} className="flex gap-2 text-muted-foreground">
-                  <span className="tabular shrink-0">{a.createdAt.toISOString().slice(0, 16).replace("T", " ")}</span>
-                  <Badge variant="outline">{a.action}</Badge>
-                  <span>{a.user?.name ?? "System"}</span>
-                  <span className="truncate">
-                    {a.next ? JSON.stringify(a.next).slice(0, 120) : ""}
-                  </span>
-                </li>
-              ))}
-              {audit.length === 0 ? <li className="text-muted-foreground">No audit entries.</li> : null}
-            </ul>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="th-band text-left">
+                    <th className="px-3 py-2">Timestamp</th>
+                    <th className="px-3 py-2">Actor</th>
+                    <th className="px-3 py-2">IP Address</th>
+                    <th className="px-3 py-2">Action</th>
+                    <th className="px-3 py-2">Old state</th>
+                    <th className="px-3 py-2">New state</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.map((a) => (
+                    <tr key={a.id} className="border-t align-top hover:bg-secondary/40">
+                      <td className="meta tabular whitespace-nowrap px-3 py-2 text-muted-foreground">
+                        {a.createdAt.toISOString().slice(0, 19).replace("T", " ")}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 font-medium">
+                        {a.user?.name ?? "System"}
+                      </td>
+                      <td className="meta whitespace-nowrap px-3 py-2 text-muted-foreground">
+                        {a.ipAddress ?? "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant="indigo">{a.action}</Badge>
+                      </td>
+                      <td className="max-w-[220px] px-3 py-2">
+                        {a.previous ? (
+                          <span className="meta block truncate rounded bg-secondary px-1.5 py-0.5 text-[10px]">
+                            {JSON.stringify(a.previous)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="max-w-[220px] px-3 py-2">
+                        {a.next ? (
+                          <span className="meta block truncate rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                            {JSON.stringify(a.next)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {audit.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                        No audit entries.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
           </CardContent>
         </Card>
       </div>
